@@ -84,6 +84,15 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(f"""
             QMainWindow {{
                 background-color: white;
+                color: {self.COLORS['text']};
+            }}
+            QWidget {{
+                background-color: white;
+                color: {self.COLORS['text']};
+            }}
+            QLabel {{
+                color: {self.COLORS['text']};
+                background-color: transparent;
             }}
             QTabWidget::pane {{
                 border: 1px solid {self.COLORS['gray']};
@@ -93,6 +102,7 @@ class MainWindow(QMainWindow):
                 padding: 8px 16px;
                 margin-right: 2px;
                 background-color: {self.COLORS['gray_light']};
+                color: {self.COLORS['text']};
                 border: 1px solid {self.COLORS['gray']};
                 border-bottom: none;
                 border-top-left-radius: 4px;
@@ -100,6 +110,7 @@ class MainWindow(QMainWindow):
             }}
             QTabBar::tab:selected {{
                 background-color: white;
+                color: {self.COLORS['text']};
                 border-bottom: 2px solid {self.COLORS['primary']};
             }}
             QTabBar::tab:hover:!selected {{
@@ -107,6 +118,7 @@ class MainWindow(QMainWindow):
             }}
             QGroupBox {{
                 font-weight: bold;
+                color: {self.COLORS['text']};
                 border: 1px solid {self.COLORS['gray']};
                 border-radius: 4px;
                 margin-top: 12px;
@@ -116,18 +128,24 @@ class MainWindow(QMainWindow):
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px;
+                color: {self.COLORS['text']};
             }}
             QTableWidget {{
                 border: 1px solid {self.COLORS['gray']};
                 gridline-color: {self.COLORS['gray']};
+                background-color: white;
+                color: {self.COLORS['text']};
                 selection-background-color: {self.COLORS['primary']};
                 selection-color: white;
             }}
             QTableWidget::item {{
                 padding: 4px;
+                color: {self.COLORS['text']};
+                background-color: white;
             }}
             QHeaderView::section {{
                 background-color: {self.COLORS['gray_light']};
+                color: {self.COLORS['text']};
                 padding: 6px;
                 border: none;
                 border-right: 1px solid {self.COLORS['gray']};
@@ -139,6 +157,7 @@ class MainWindow(QMainWindow):
                 border: 1px solid {self.COLORS['gray']};
                 border-radius: 4px;
                 background-color: white;
+                color: {self.COLORS['text']};
             }}
             QPushButton:hover {{
                 background-color: {self.COLORS['gray_light']};
@@ -167,9 +186,24 @@ class MainWindow(QMainWindow):
                 border: 1px solid {self.COLORS['gray']};
                 border-radius: 4px;
                 background-color: white;
+                color: {self.COLORS['text']};
             }}
             QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QDateEdit:focus {{
                 border-color: {self.COLORS['primary']};
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: white;
+                color: {self.COLORS['text']};
+                selection-background-color: {self.COLORS['primary']};
+                selection-color: white;
+            }}
+            QCheckBox {{
+                color: {self.COLORS['text']};
+                background-color: transparent;
+            }}
+            QFrame {{
+                background-color: white;
+                color: {self.COLORS['text']};
             }}
         """)
 
