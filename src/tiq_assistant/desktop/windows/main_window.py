@@ -707,15 +707,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Fetched Meetings"))
 
         self._events_table = QTableWidget()
-        self._events_table.setColumnCount(8)
+        self._events_table.setColumnCount(9)
         self._events_table.setHorizontalHeaderLabels([
-            "Select", "Date", "Time", "Subject", "Hours", "Project", "Description", "Add"
+            "Select", "Date", "Time", "Subject", "Hours", "Activity", "Project", "Description", "Add"
         ])
         self._events_table.horizontalHeader().setSectionResizeMode(
             3, QHeaderView.ResizeMode.Stretch
         )
         self._events_table.horizontalHeader().setSectionResizeMode(
-            6, QHeaderView.ResizeMode.Stretch
+            7, QHeaderView.ResizeMode.Stretch  # Description column
         )
         self._events_table.verticalHeader().setVisible(False)
         layout.addWidget(self._events_table)
@@ -857,6 +857,16 @@ class MainWindow(QMainWindow):
             hours_spin.setValue(max(1, round(meeting.duration_hours)))
             self._events_table.setCellWidget(i, 4, hours_spin)
 
+            # Activity code dropdown (default to TPLNT for meetings)
+            activity_combo = QComboBox()
+            for code in ActivityCode:
+                activity_combo.addItem(code.value, code)
+            # Default to TPLNT (Meeting) for calendar events
+            tplnt_idx = [i for i, code in enumerate(ActivityCode) if code == ActivityCode.TPLNT]
+            if tplnt_idx:
+                activity_combo.setCurrentIndex(tplnt_idx[0])
+            self._events_table.setCellWidget(i, 5, activity_combo)
+
             # Project dropdown (editable)
             project_combo = QComboBox()
             project_combo.addItem("-- Select --", None)
@@ -866,12 +876,12 @@ class MainWindow(QMainWindow):
                 if meeting.matched_project_id and project.id == meeting.matched_project_id:
                     selected_idx = j + 1
             project_combo.setCurrentIndex(selected_idx)
-            self._events_table.setCellWidget(i, 5, project_combo)
+            self._events_table.setCellWidget(i, 6, project_combo)
 
             # Description (editable)
             desc_edit = QLineEdit()
             desc_edit.setText(meeting.subject)
-            self._events_table.setCellWidget(i, 6, desc_edit)
+            self._events_table.setCellWidget(i, 7, desc_edit)
 
             # Add single button
             add_btn = self._create_primary_button("Add")
@@ -882,7 +892,7 @@ class MainWindow(QMainWindow):
                 padding: 4px 8px;
             """)
             add_btn.clicked.connect(lambda checked, idx=i: self._add_single_meeting(idx))
-            self._events_table.setCellWidget(i, 7, add_btn)
+            self._events_table.setCellWidget(i, 8, add_btn)
 
             # Color-code matched meetings with light green background
             if is_matched:
@@ -899,10 +909,13 @@ class MainWindow(QMainWindow):
         hours_spin = self._events_table.cellWidget(row, 4)
         hours = hours_spin.value() if hours_spin else max(1, round(meeting.duration_hours))
 
-        project_combo = self._events_table.cellWidget(row, 5)
+        activity_combo = self._events_table.cellWidget(row, 5)
+        activity_code = activity_combo.currentData() if activity_combo else ActivityCode.TPLNT
+
+        project_combo = self._events_table.cellWidget(row, 6)
         project_id = project_combo.currentData() if project_combo else None
 
-        desc_edit = self._events_table.cellWidget(row, 6)
+        desc_edit = self._events_table.cellWidget(row, 7)
         description = desc_edit.text() if desc_edit else meeting.subject
 
         settings = self._store.get_settings()
@@ -914,7 +927,7 @@ class MainWindow(QMainWindow):
             hours=hours,
             ticket_number=project.ticket_number if project else None,
             project_name=project.name if project else None,
-            activity_code=settings.meeting_activity_code,
+            activity_code=activity_code,
             location=settings.default_location,
             description=description,
             status=EntryStatus.DRAFT,
@@ -930,7 +943,7 @@ class MainWindow(QMainWindow):
         if checkbox:
             checkbox.setEnabled(False)
             checkbox.setChecked(False)
-        add_btn = self._events_table.cellWidget(row, 7)
+        add_btn = self._events_table.cellWidget(row, 8)
         if add_btn:
             add_btn.setEnabled(False)
 
@@ -954,10 +967,13 @@ class MainWindow(QMainWindow):
                     hours_spin = self._events_table.cellWidget(i, 4)
                     hours = hours_spin.value() if hours_spin else max(1, round(meeting.duration_hours))
 
-                    project_combo = self._events_table.cellWidget(i, 5)
+                    activity_combo = self._events_table.cellWidget(i, 5)
+                    activity_code = activity_combo.currentData() if activity_combo else ActivityCode.TPLNT
+
+                    project_combo = self._events_table.cellWidget(i, 6)
                     project_id = project_combo.currentData() if project_combo else None
 
-                    desc_edit = self._events_table.cellWidget(i, 6)
+                    desc_edit = self._events_table.cellWidget(i, 7)
                     description = desc_edit.text() if desc_edit else meeting.subject
 
                     project = self._store.get_project(project_id) if project_id else None
@@ -968,7 +984,7 @@ class MainWindow(QMainWindow):
                         hours=hours,
                         ticket_number=project.ticket_number if project else None,
                         project_name=project.name if project else None,
-                        activity_code=settings.meeting_activity_code,
+                        activity_code=activity_code,
                         location=settings.default_location,
                         description=description,
                         status=EntryStatus.DRAFT,
@@ -980,7 +996,7 @@ class MainWindow(QMainWindow):
                     self._store.save_entry(entry)
                     checkbox.setEnabled(False)
                     checkbox.setChecked(False)
-                    add_btn = self._events_table.cellWidget(i, 7)
+                    add_btn = self._events_table.cellWidget(i, 8)
                     if add_btn:
                         add_btn.setEnabled(False)
                     count += 1
