@@ -14,18 +14,31 @@ from tiq_assistant.storage.sqlite_store import get_store
 class ExcelExporter:
     """Export timesheet entries to Excel format."""
 
-    # Column configuration matching the timesheet format
+    # Column configuration matching the exact timesheet format
+    # Note: Column names have trailing spaces to match the template exactly
     COLUMNS = [
         ("Consultant ID", 20),
-        ("Date", 15),
-        ("Workhour", 10),
-        ("Ticket No", 15),
-        ("Project", 35),
-        ("Activity No", 12),
-        ("Location", 12),
-        ("", 5),  # Empty spacer column
+        ("Date         ", 15),
+        ("Workhour     ", 10),
+        ("Ticket No    ", 15),
+        ("Project      ", 35),
+        ("Activity No  ", 12),
+        ("Location     ", 12),
+        ("             ", 5),  # Empty spacer column (13 spaces)
         ("Activity", 50),
     ]
+
+    # Mapping from internal keys to column headers (for to_export_row compatibility)
+    COLUMN_KEY_MAP = {
+        "Consultant ID": "Consultant ID",
+        "Date": "Date         ",
+        "Workhour": "Workhour     ",
+        "Ticket No": "Ticket No    ",
+        "Project": "Project      ",
+        "Activity No": "Activity No  ",
+        "Location": "Location     ",
+        "Activity": "Activity",
+    }
 
     def export_to_new_file(
         self,
