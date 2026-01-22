@@ -33,6 +33,7 @@ class TIQDesktopApp:
         self._tray_manager: Optional[TrayIconManager] = None
         self._scheduler: Optional[SchedulerManager] = None
         self._current_popup = None
+        self._main_window = None
 
     def run(self) -> int:
         """
@@ -214,17 +215,18 @@ class TIQDesktopApp:
 
     def _show_dashboard(self) -> None:
         """Show the main dashboard window."""
-        logger.info("Opening dashboard")
-        # For now, show a message. Dashboard can be implemented later.
-        QMessageBox.information(
-            None,
-            "TIQ Assistant",
-            "Dashboard feature coming soon!\n\n"
-            "For now, use the tray menu to:\n"
-            "- Open Morning/Afternoon entry popups\n"
-            "- Sync Outlook calendar\n"
-            "- Access Settings"
-        )
+        logger.info("Opening main window")
+
+        from tiq_assistant.desktop.windows.main_window import MainWindow
+
+        # Create main window if it doesn't exist
+        if self._main_window is None:
+            self._main_window = MainWindow()
+
+        # Show and bring to front
+        self._main_window.show()
+        self._main_window.raise_()
+        self._main_window.activateWindow()
 
     def _on_entries_saved(self, count: int) -> None:
         """Handle entries saved event."""
@@ -268,7 +270,7 @@ class TIQDesktopApp:
             # Export
             exporter = ExcelExporter()
             if export_path.exists():
-                exporter.append_to_file(entries, export_path)
+                exporter.append_to_existing(entries, export_path)
             else:
                 exporter.export_to_new_file(entries, export_path)
 
