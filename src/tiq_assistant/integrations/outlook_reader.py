@@ -5,12 +5,12 @@ from typing import Optional
 import logging
 
 from tiq_assistant.core.models import OutlookMeeting, CalendarEvent
-from tiq_assistant.core.exceptions import TIQError
+from tiq_assistant.core.exceptions import TIQAssistantError
 
 logger = logging.getLogger(__name__)
 
 
-class OutlookNotAvailableError(TIQError):
+class OutlookNotAvailableError(TIQAssistantError):
     """Raised when Outlook is not available or COM access is blocked."""
     pass
 
