@@ -1,0 +1,43 @@
+[project]
+name = "tiq-assistant"
+version = "0.1.0"
+description = "Timesheet Intelligence Assistant - Automate timesheet entry from calendar data"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    "xlsxwriter>=3.1.0",
+    "streamlit>=1.30.0",
+    "python-dateutil>=2.8.0",
+    "PyQt6>=6.5.0",
+    "APScheduler>=3.10.0",
+    "pywin32>=306",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+tiq = "tiq_assistant.cli.app:app"
+tiq-desktop = "tiq_assistant.desktop.app:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
