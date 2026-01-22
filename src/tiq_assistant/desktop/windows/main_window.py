@@ -16,12 +16,12 @@ from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QFont
 
 from tiq_assistant.core.models import (
-    Project, TimesheetEntry, ActivityCode, EntryStatus, EntrySource
+    Project, TimesheetEntry, ActivityCode, EntryStatus, EntrySource, OutlookMeeting
 )
 from tiq_assistant.storage.sqlite_store import get_store
 from tiq_assistant.services.matching_service import get_matching_service
 from tiq_assistant.services.timesheet_service import get_timesheet_service
-from tiq_assistant.parsers.outlook_parser import parse_outlook_calendar
+from tiq_assistant.integrations.outlook_reader import get_outlook_reader, OutlookNotAvailableError
 from tiq_assistant.exporters.excel_exporter import (
     ExcelExporter, get_monthly_export_path
 )
@@ -36,7 +36,7 @@ class MainWindow(QMainWindow):
         self._store = get_store()
         self._matching_service = get_matching_service()
         self._timesheet_service = get_timesheet_service()
-        self._calendar_events = []
+        self._outlook_meetings: list[OutlookMeeting] = []
 
         self._setup_ui()
         self._load_data()
@@ -488,201 +488,333 @@ class MainWindow(QMainWindow):
     # ==================== CALENDAR IMPORT TAB ====================
 
     def _create_import_tab(self) -> QWidget:
-        """Create the calendar import tab."""
+        """Create the calendar import tab with Outlook COM integration."""
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # File upload section
-        upload_layout = QHBoxLayout()
-        upload_layout.addWidget(QLabel("Outlook Calendar Export (Excel):"))
+        # Date range section
+        date_group = QGroupBox("Select Date Range")
+        date_layout = QHBoxLayout(date_group)
 
-        self._file_path_label = QLabel("No file selected")
-        upload_layout.addWidget(self._file_path_label)
+        date_layout.addWidget(QLabel("From:"))
+        self._import_start_date = QDateEdit()
+        self._import_start_date.setCalendarPopup(True)
+        self._import_start_date.setDate(QDate.currentDate().addDays(-7))
+        date_layout.addWidget(self._import_start_date)
 
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self._browse_calendar_file)
-        upload_layout.addWidget(browse_btn)
+        date_layout.addWidget(QLabel("To:"))
+        self._import_end_date = QDateEdit()
+        self._import_end_date.setCalendarPopup(True)
+        self._import_end_date.setDate(QDate.currentDate())
+        date_layout.addWidget(self._import_end_date)
 
-        upload_layout.addStretch()
-        layout.addLayout(upload_layout)
+        # Quick date buttons
+        today_btn = QPushButton("Today")
+        today_btn.clicked.connect(self._set_import_today)
+        date_layout.addWidget(today_btn)
 
-        # Import button
-        import_btn = QPushButton("Parse Calendar File")
-        import_btn.clicked.connect(self._parse_calendar)
-        layout.addWidget(import_btn)
+        week_btn = QPushButton("This Week")
+        week_btn.clicked.connect(self._set_import_this_week)
+        date_layout.addWidget(week_btn)
+
+        month_btn = QPushButton("This Month")
+        month_btn.clicked.connect(self._set_import_this_month)
+        date_layout.addWidget(month_btn)
+
+        date_layout.addStretch()
+        layout.addWidget(date_group)
+
+        # Fetch button
+        fetch_btn = QPushButton("Fetch Meetings from Outlook")
+        fetch_btn.setStyleSheet("font-weight: bold; padding: 10px;")
+        fetch_btn.clicked.connect(self._fetch_outlook_meetings)
+        layout.addWidget(fetch_btn)
+
+        # Status label
+        self._import_status = QLabel("Select a date range and click 'Fetch Meetings from Outlook'")
+        self._import_status.setStyleSheet("color: gray; font-style: italic;")
+        layout.addWidget(self._import_status)
 
         # Events table
-        layout.addWidget(QLabel("Parsed Events"))
+        layout.addWidget(QLabel("Fetched Meetings"))
 
         self._events_table = QTableWidget()
-        self._events_table.setColumnCount(7)
+        self._events_table.setColumnCount(8)
         self._events_table.setHorizontalHeaderLabels([
-            "Select", "Date", "Subject", "Hours", "JIRA Key", "Matched Project", "Add"
+            "Select", "Date", "Time", "Subject", "Hours", "Project", "Description", "Add"
         ])
         self._events_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch
+            3, QHeaderView.ResizeMode.Stretch
+        )
+        self._events_table.horizontalHeader().setSectionResizeMode(
+            6, QHeaderView.ResizeMode.Stretch
         )
         layout.addWidget(self._events_table)
 
-        # Add all selected button
-        add_all_btn = QPushButton("Add All Selected Events")
-        add_all_btn.clicked.connect(self._add_selected_events)
-        layout.addWidget(add_all_btn)
+        # Bottom buttons
+        btn_layout = QHBoxLayout()
+
+        add_selected_btn = QPushButton("Add Selected Meetings")
+        add_selected_btn.clicked.connect(self._add_selected_meetings)
+        btn_layout.addWidget(add_selected_btn)
+
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.clicked.connect(self._select_all_meetings)
+        btn_layout.addWidget(select_all_btn)
+
+        deselect_all_btn = QPushButton("Deselect All")
+        deselect_all_btn.clicked.connect(self._deselect_all_meetings)
+        btn_layout.addWidget(deselect_all_btn)
+
+        btn_layout.addStretch()
+        layout.addLayout(btn_layout)
 
         return widget
 
-    def _browse_calendar_file(self) -> None:
-        """Browse for a calendar file."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Outlook Calendar Export",
-            "",
-            "Excel Files (*.xlsx *.xls)"
-        )
+    def _set_import_today(self) -> None:
+        """Set import date range to today."""
+        today = QDate.currentDate()
+        self._import_start_date.setDate(today)
+        self._import_end_date.setDate(today)
 
-        if file_path:
-            self._file_path_label.setText(file_path)
+    def _set_import_this_week(self) -> None:
+        """Set import date range to this week (Mon-Fri)."""
+        today = QDate.currentDate()
+        # Go back to Monday
+        days_since_monday = today.dayOfWeek() - 1
+        monday = today.addDays(-days_since_monday)
+        friday = monday.addDays(4)
+        self._import_start_date.setDate(monday)
+        self._import_end_date.setDate(friday)
 
-    def _parse_calendar(self) -> None:
-        """Parse the selected calendar file."""
-        file_path = self._file_path_label.text()
+    def _set_import_this_month(self) -> None:
+        """Set import date range to this month."""
+        today = QDate.currentDate()
+        first_of_month = QDate(today.year(), today.month(), 1)
+        self._import_start_date.setDate(first_of_month)
+        self._import_end_date.setDate(today)
 
-        if file_path == "No file selected":
-            QMessageBox.warning(self, "Error", "Please select a file first.")
-            return
-
+    def _fetch_outlook_meetings(self) -> None:
+        """Fetch meetings from Outlook for the selected date range."""
         try:
-            settings = self._store.get_settings()
-            events = parse_outlook_calendar(
-                file_path,
-                skip_canceled=settings.skip_canceled_meetings
-            )
+            reader = get_outlook_reader()
 
-            # Match events
-            self._matching_service.match_events(events)
-            self._calendar_events = events
+            if not reader.is_available():
+                QMessageBox.warning(
+                    self, "Outlook Not Available",
+                    "Could not connect to Outlook. Make sure Outlook desktop "
+                    "(not the web version) is installed and has been opened at least once."
+                )
+                return
+
+            start_date = self._import_start_date.date().toPyDate()
+            end_date = self._import_end_date.date().toPyDate()
+
+            if start_date > end_date:
+                QMessageBox.warning(self, "Invalid Range", "Start date must be before end date.")
+                return
+
+            self._import_status.setText("Fetching meetings from Outlook...")
+            self._import_status.setStyleSheet("color: blue;")
+
+            # Fetch meetings
+            meetings = reader.get_meetings_for_date_range(start_date, end_date)
+            self._outlook_meetings = meetings
+
+            # Match meetings to projects
+            for meeting in meetings:
+                event = reader.to_calendar_event(meeting)
+                result = self._matching_service.match_event(event)
+                meeting.matched_project_id = result.project_id
+                meeting.matched_jira_key = result.ticket_jira_key
+                meeting.match_confidence = result.confidence
 
             # Populate table
-            self._events_table.setRowCount(len(events))
+            self._populate_meetings_table()
 
-            for i, event in enumerate(events):
-                # Checkbox
-                checkbox = QCheckBox()
-                checkbox.setChecked(event.match_confidence > 0)
-                self._events_table.setCellWidget(i, 0, checkbox)
-
-                self._events_table.setItem(i, 1, QTableWidgetItem(
-                    event.start_date.strftime("%d.%m.%Y")
-                ))
-                self._events_table.setItem(i, 2, QTableWidgetItem(
-                    event.subject[:50] + "..." if len(event.subject) > 50 else event.subject
-                ))
-
-                hours_spin = QSpinBox()
-                hours_spin.setRange(1, 24)
-                hours_spin.setValue(max(1, round(float(event.duration_hours))))
-                self._events_table.setCellWidget(i, 3, hours_spin)
-
-                self._events_table.setItem(i, 4, QTableWidgetItem(
-                    event.matched_jira_key or "-"
-                ))
-
-                # Project name
-                project_name = "-"
-                if event.matched_project_id:
-                    project = self._store.get_project(event.matched_project_id)
-                    if project:
-                        project_name = project.name[:30]
-                self._events_table.setItem(i, 5, QTableWidgetItem(project_name))
-
-                # Add single button
-                add_btn = QPushButton("Add")
-                add_btn.clicked.connect(lambda checked, idx=i: self._add_single_event(idx))
-                self._events_table.setCellWidget(i, 6, add_btn)
-
-            QMessageBox.information(
-                self, "Success",
-                f"Parsed {len(events)} events. "
-                f"{len([e for e in events if e.match_confidence > 0])} matched to projects."
+            self._import_status.setText(
+                f"Found {len(meetings)} meetings. "
+                f"{len([m for m in meetings if m.match_confidence and m.match_confidence > 0])} matched to projects."
             )
+            self._import_status.setStyleSheet("color: green;")
 
+        except OutlookNotAvailableError as e:
+            QMessageBox.warning(self, "Outlook Error", str(e))
+            self._import_status.setText("Failed to connect to Outlook")
+            self._import_status.setStyleSheet("color: red;")
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to parse file: {e}")
+            QMessageBox.warning(self, "Error", f"Failed to fetch meetings: {e}")
+            self._import_status.setText(f"Error: {e}")
+            self._import_status.setStyleSheet("color: red;")
 
-    def _add_single_event(self, row: int) -> None:
-        """Add a single event as a timesheet entry."""
-        if row >= len(self._calendar_events):
+    def _populate_meetings_table(self) -> None:
+        """Populate the meetings table with fetched Outlook meetings."""
+        self._events_table.setRowCount(len(self._outlook_meetings))
+
+        projects = self._store.get_projects()
+        project_map = {p.id: p for p in projects}
+
+        for i, meeting in enumerate(self._outlook_meetings):
+            # Checkbox - pre-select matched meetings
+            checkbox = QCheckBox()
+            checkbox.setChecked(meeting.match_confidence is not None and meeting.match_confidence > 0)
+            self._events_table.setCellWidget(i, 0, checkbox)
+
+            # Date
+            self._events_table.setItem(i, 1, QTableWidgetItem(
+                meeting.start_datetime.strftime("%d.%m.%Y")
+            ))
+
+            # Time
+            self._events_table.setItem(i, 2, QTableWidgetItem(
+                meeting.display_time
+            ))
+
+            # Subject (truncate if long)
+            subject = meeting.subject
+            if len(subject) > 40:
+                subject = subject[:37] + "..."
+            self._events_table.setItem(i, 3, QTableWidgetItem(subject))
+
+            # Hours (editable spinner)
+            hours_spin = QSpinBox()
+            hours_spin.setRange(1, 8)
+            hours_spin.setValue(max(1, round(meeting.duration_hours)))
+            self._events_table.setCellWidget(i, 4, hours_spin)
+
+            # Project dropdown (editable)
+            project_combo = QComboBox()
+            project_combo.addItem("-- Select --", None)
+            selected_idx = 0
+            for j, project in enumerate(projects):
+                project_combo.addItem(project.name, project.id)
+                if meeting.matched_project_id and project.id == meeting.matched_project_id:
+                    selected_idx = j + 1
+            project_combo.setCurrentIndex(selected_idx)
+            self._events_table.setCellWidget(i, 5, project_combo)
+
+            # Description (editable)
+            desc_edit = QLineEdit()
+            desc_edit.setText(meeting.subject)
+            self._events_table.setCellWidget(i, 6, desc_edit)
+
+            # Add single button
+            add_btn = QPushButton("Add")
+            add_btn.clicked.connect(lambda checked, idx=i: self._add_single_meeting(idx))
+            self._events_table.setCellWidget(i, 7, add_btn)
+
+    def _add_single_meeting(self, row: int) -> None:
+        """Add a single meeting as a timesheet entry."""
+        if row >= len(self._outlook_meetings):
             return
 
-        event = self._calendar_events[row]
-        hours_spin = self._events_table.cellWidget(row, 3)
-        hours = hours_spin.value() if hours_spin else max(1, round(float(event.duration_hours)))
+        meeting = self._outlook_meetings[row]
+
+        # Get values from widgets
+        hours_spin = self._events_table.cellWidget(row, 4)
+        hours = hours_spin.value() if hours_spin else max(1, round(meeting.duration_hours))
+
+        project_combo = self._events_table.cellWidget(row, 5)
+        project_id = project_combo.currentData() if project_combo else None
+
+        desc_edit = self._events_table.cellWidget(row, 6)
+        description = desc_edit.text() if desc_edit else meeting.subject
 
         settings = self._store.get_settings()
-        project = self._store.get_project(event.matched_project_id) if event.matched_project_id else None
+        project = self._store.get_project(project_id) if project_id else None
 
         entry = TimesheetEntry(
             consultant_id=settings.consultant_id,
-            entry_date=event.start_date,
+            entry_date=meeting.start_datetime.date(),
             hours=hours,
             ticket_number=project.ticket_number if project else None,
             project_name=project.name if project else None,
             activity_code=settings.meeting_activity_code,
             location=settings.default_location,
-            description=event.to_timesheet_description(),
+            description=description,
             status=EntryStatus.DRAFT,
             source=EntrySource.CALENDAR,
-            source_event_id=event.id,
-            source_jira_key=event.matched_jira_key,
+            source_event_id=meeting.id,
+            source_jira_key=meeting.matched_jira_key,
         )
 
         self._store.save_entry(entry)
 
         # Disable the row
-        self._events_table.cellWidget(row, 0).setEnabled(False)
-        self._events_table.cellWidget(row, 6).setEnabled(False)
+        checkbox = self._events_table.cellWidget(row, 0)
+        if checkbox:
+            checkbox.setEnabled(False)
+            checkbox.setChecked(False)
+        add_btn = self._events_table.cellWidget(row, 7)
+        if add_btn:
+            add_btn.setEnabled(False)
 
-        QMessageBox.information(self, "Added", f"Added entry for: {event.subject[:40]}")
+        QMessageBox.information(self, "Added", f"Added entry for: {meeting.subject[:40]}")
 
-    def _add_selected_events(self) -> None:
-        """Add all selected events as timesheet entries."""
+    def _add_selected_meetings(self) -> None:
+        """Add all selected meetings as timesheet entries."""
         count = 0
         settings = self._store.get_settings()
 
         for i in range(self._events_table.rowCount()):
             checkbox = self._events_table.cellWidget(i, 0)
             if checkbox and checkbox.isChecked() and checkbox.isEnabled():
-                if i < len(self._calendar_events):
-                    event = self._calendar_events[i]
-                    hours_spin = self._events_table.cellWidget(i, 3)
-                    hours = hours_spin.value() if hours_spin else max(1, round(float(event.duration_hours)))
+                if i < len(self._outlook_meetings):
+                    meeting = self._outlook_meetings[i]
 
-                    project = self._store.get_project(event.matched_project_id) if event.matched_project_id else None
+                    # Get values from widgets
+                    hours_spin = self._events_table.cellWidget(i, 4)
+                    hours = hours_spin.value() if hours_spin else max(1, round(meeting.duration_hours))
+
+                    project_combo = self._events_table.cellWidget(i, 5)
+                    project_id = project_combo.currentData() if project_combo else None
+
+                    desc_edit = self._events_table.cellWidget(i, 6)
+                    description = desc_edit.text() if desc_edit else meeting.subject
+
+                    project = self._store.get_project(project_id) if project_id else None
 
                     entry = TimesheetEntry(
                         consultant_id=settings.consultant_id,
-                        entry_date=event.start_date,
+                        entry_date=meeting.start_datetime.date(),
                         hours=hours,
                         ticket_number=project.ticket_number if project else None,
                         project_name=project.name if project else None,
                         activity_code=settings.meeting_activity_code,
                         location=settings.default_location,
-                        description=event.to_timesheet_description(),
+                        description=description,
                         status=EntryStatus.DRAFT,
                         source=EntrySource.CALENDAR,
-                        source_event_id=event.id,
-                        source_jira_key=event.matched_jira_key,
+                        source_event_id=meeting.id,
+                        source_jira_key=meeting.matched_jira_key,
                     )
 
                     self._store.save_entry(entry)
                     checkbox.setEnabled(False)
-                    self._events_table.cellWidget(i, 6).setEnabled(False)
+                    checkbox.setChecked(False)
+                    add_btn = self._events_table.cellWidget(i, 7)
+                    if add_btn:
+                        add_btn.setEnabled(False)
                     count += 1
 
         if count > 0:
-            QMessageBox.information(self, "Added", f"Added {count} entries!")
+            QMessageBox.information(self, "Added", f"Added {count} timesheet entries!")
         else:
-            QMessageBox.information(self, "No Selection", "No events were selected.")
+            QMessageBox.information(self, "No Selection", "No meetings were selected.")
+
+    def _select_all_meetings(self) -> None:
+        """Select all meetings in the table."""
+        for i in range(self._events_table.rowCount()):
+            checkbox = self._events_table.cellWidget(i, 0)
+            if checkbox and checkbox.isEnabled():
+                checkbox.setChecked(True)
+
+    def _deselect_all_meetings(self) -> None:
+        """Deselect all meetings in the table."""
+        for i in range(self._events_table.rowCount()):
+            checkbox = self._events_table.cellWidget(i, 0)
+            if checkbox and checkbox.isEnabled():
+                checkbox.setChecked(False)
 
     # ==================== SETTINGS TAB ====================
 

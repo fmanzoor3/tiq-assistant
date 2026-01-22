@@ -126,6 +126,57 @@ class OutlookReader:
             logger.error(f"Error fetching meetings: {e}")
             return []
 
+    def get_meetings_for_date_range(
+        self,
+        start_date: date,
+        end_date: date
+    ) -> list[OutlookMeeting]:
+        """
+        Get all calendar events for a date range.
+
+        Args:
+            start_date: The start date (inclusive)
+            end_date: The end date (inclusive)
+
+        Returns:
+            List of OutlookMeeting objects
+        """
+        self._connect()
+
+        meetings = []
+
+        try:
+            # Format dates for Outlook filter
+            start_str = start_date.strftime("%m/%d/%Y 12:00 AM")
+            # Add one day to end_date to make it inclusive
+            end_date_plus = end_date + timedelta(days=1)
+            end_str = end_date_plus.strftime("%m/%d/%Y 12:00 AM")
+
+            # Get calendar items
+            items = self._calendar.Items
+            items.Sort("[Start]")
+            items.IncludeRecurrences = True
+
+            # Restrict to the date range
+            restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
+            filtered_items = items.Restrict(restriction)
+
+            for item in filtered_items:
+                try:
+                    meeting = self._parse_calendar_item(item)
+                    if meeting:
+                        meetings.append(meeting)
+                except Exception as e:
+                    logger.warning(f"Failed to parse calendar item: {e}")
+                    continue
+
+            logger.info(f"Found {len(meetings)} meetings from {start_date} to {end_date}")
+            return meetings
+
+        except Exception as e:
+            logger.error(f"Error fetching meetings: {e}")
+            return []
+
     def get_meetings_for_session(
         self,
         target_date: date,
