@@ -1,9 +1,18 @@
 # TIQ Assistant - Quick Start Guide
 
-## First-Time Setup (Work Laptop)
+## First-Time Setup
+
+### Personal Laptop (with IDE/virtual environment)
+
+If you're developing in VS Code or an IDE with the project open:
+```cmd
+pip install -r requirements.txt
+pip install -e .
+```
+
+### Work Laptop (fresh install from ZIP)
 
 If this is a fresh install or new machine, run these commands first:
-
 ```cmd
 cd "C:\path\to\tiq-assistant"
 pip install -r requirements.txt
@@ -17,6 +26,13 @@ This installs all dependencies and registers the package so Python can find `tiq
 ## Running the App
 
 ### Desktop App (System Tray)
+
+**Personal Laptop** (from project directory):
+```cmd
+python -m tiq_assistant
+```
+
+**Work Laptop** (from any directory):
 ```cmd
 cd "C:\path\to\tiq-assistant"
 python -m tiq_assistant
