@@ -10,10 +10,10 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QSpinBox, QComboBox, QFormLayout, QGroupBox,
     QMessageBox, QFileDialog, QDateEdit, QTextEdit, QCheckBox,
-    QSplitter, QFrame, QScrollArea, QSizePolicy
+    QSplitter, QFrame, QScrollArea, QSizePolicy, QAbstractItemView
 )
 from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QColor, QBrush
 
 from tiq_assistant.core.models import (
     Project, TimesheetEntry, ActivityCode, EntryStatus, EntrySource, OutlookMeeting
@@ -30,6 +30,22 @@ from tiq_assistant.exporters.excel_exporter import (
 class MainWindow(QMainWindow):
     """Main application window with all TIQ Assistant functionality."""
 
+    # Color scheme
+    COLORS = {
+        'primary': '#0078D4',        # Microsoft blue
+        'primary_hover': '#106EBE',
+        'success': '#107C10',        # Green
+        'success_light': '#DFF6DD',
+        'warning': '#FFB900',        # Yellow/amber
+        'warning_light': '#FFF4CE',
+        'danger': '#D13438',         # Red
+        'danger_light': '#FDE7E9',
+        'gray_light': '#F3F3F3',
+        'gray': '#E1E1E1',
+        'text': '#323130',
+        'text_secondary': '#605E5C',
+    }
+
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
 
@@ -39,6 +55,7 @@ class MainWindow(QMainWindow):
         self._outlook_meetings: list[OutlookMeeting] = []
 
         self._setup_ui()
+        self._apply_styles()
         self._load_data()
 
     def _setup_ui(self) -> None:
@@ -61,6 +78,100 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._create_timesheet_tab(), "Timesheet")
         self._tabs.addTab(self._create_import_tab(), "Calendar Import")
         self._tabs.addTab(self._create_settings_tab(), "Settings")
+
+    def _apply_styles(self) -> None:
+        """Apply global stylesheet to the application."""
+        self.setStyleSheet(f"""
+            QMainWindow {{
+                background-color: white;
+            }}
+            QTabWidget::pane {{
+                border: 1px solid {self.COLORS['gray']};
+                background-color: white;
+            }}
+            QTabBar::tab {{
+                padding: 8px 16px;
+                margin-right: 2px;
+                background-color: {self.COLORS['gray_light']};
+                border: 1px solid {self.COLORS['gray']};
+                border-bottom: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }}
+            QTabBar::tab:selected {{
+                background-color: white;
+                border-bottom: 2px solid {self.COLORS['primary']};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {self.COLORS['gray']};
+            }}
+            QGroupBox {{
+                font-weight: bold;
+                border: 1px solid {self.COLORS['gray']};
+                border-radius: 4px;
+                margin-top: 12px;
+                padding-top: 8px;
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }}
+            QTableWidget {{
+                border: 1px solid {self.COLORS['gray']};
+                gridline-color: {self.COLORS['gray']};
+                selection-background-color: {self.COLORS['primary']};
+                selection-color: white;
+            }}
+            QTableWidget::item {{
+                padding: 4px;
+            }}
+            QHeaderView::section {{
+                background-color: {self.COLORS['gray_light']};
+                padding: 6px;
+                border: none;
+                border-right: 1px solid {self.COLORS['gray']};
+                border-bottom: 1px solid {self.COLORS['gray']};
+                font-weight: bold;
+            }}
+            QPushButton {{
+                padding: 6px 12px;
+                border: 1px solid {self.COLORS['gray']};
+                border-radius: 4px;
+                background-color: white;
+            }}
+            QPushButton:hover {{
+                background-color: {self.COLORS['gray_light']};
+            }}
+            QPushButton:pressed {{
+                background-color: {self.COLORS['gray']};
+            }}
+            QPushButton[primary="true"] {{
+                background-color: {self.COLORS['primary']};
+                color: white;
+                border: none;
+            }}
+            QPushButton[primary="true"]:hover {{
+                background-color: {self.COLORS['primary_hover']};
+            }}
+            QPushButton[danger="true"] {{
+                background-color: {self.COLORS['danger']};
+                color: white;
+                border: none;
+            }}
+            QPushButton[danger="true"]:hover {{
+                background-color: #C50F1F;
+            }}
+            QLineEdit, QSpinBox, QComboBox, QDateEdit {{
+                padding: 6px;
+                border: 1px solid {self.COLORS['gray']};
+                border-radius: 4px;
+                background-color: white;
+            }}
+            QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QDateEdit:focus {{
+                border-color: {self.COLORS['primary']};
+            }}
+        """)
 
     # ==================== DASHBOARD TAB ====================
 
@@ -97,10 +208,11 @@ class MainWindow(QMainWindow):
         self._recent_table.horizontalHeader().setSectionResizeMode(
             4, QHeaderView.ResizeMode.Stretch
         )
+        self._style_table(self._recent_table)
         layout.addWidget(self._recent_table)
 
         # Refresh button
-        refresh_btn = QPushButton("Refresh")
+        refresh_btn = self._create_primary_button("Refresh")
         refresh_btn.clicked.connect(self._refresh_dashboard)
         layout.addWidget(refresh_btn)
 
@@ -175,7 +287,8 @@ class MainWindow(QMainWindow):
             self._recent_table.setItem(i, 4, QTableWidgetItem(
                 entry.description[:50] + "..." if len(entry.description) > 50 else entry.description
             ))
-            self._recent_table.setItem(i, 5, QTableWidgetItem(entry.status.value))
+            # Status badge
+            self._recent_table.setCellWidget(i, 5, self._create_status_badge(entry.status))
 
     # ==================== PROJECTS TAB ====================
 
@@ -204,7 +317,7 @@ class MainWindow(QMainWindow):
         self._keywords_input.setPlaceholderText("Agent Bot, big data (comma-separated)")
         form_layout.addRow("Keywords:", self._keywords_input)
 
-        add_project_btn = QPushButton("Add Project")
+        add_project_btn = self._create_primary_button("Add Project")
         add_project_btn.clicked.connect(self._add_project)
         form_layout.addRow("", add_project_btn)
 
@@ -221,6 +334,7 @@ class MainWindow(QMainWindow):
         self._projects_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch
         )
+        self._style_table(self._projects_table)
         layout.addWidget(self._projects_table)
 
         return widget
@@ -273,7 +387,7 @@ class MainWindow(QMainWindow):
             self._projects_table.setItem(i, 4, QTableWidgetItem(project.default_location))
 
             # Delete button
-            delete_btn = QPushButton("Delete")
+            delete_btn = self._create_danger_button("Delete")
             delete_btn.clicked.connect(lambda checked, pid=project.id: self._delete_project(pid))
             self._projects_table.setCellWidget(i, 5, delete_btn)
 
@@ -323,6 +437,7 @@ class MainWindow(QMainWindow):
         self._entries_table.horizontalHeader().setSectionResizeMode(
             5, QHeaderView.ResizeMode.Stretch
         )
+        self._style_table(self._entries_table)
         layout.addWidget(self._entries_table)
 
         # Add entry form
@@ -351,7 +466,7 @@ class MainWindow(QMainWindow):
         self._entry_description.setPlaceholderText("What did you work on?")
         add_layout.addRow("Description:", self._entry_description)
 
-        add_entry_btn = QPushButton("Add Entry")
+        add_entry_btn = self._create_primary_button("Add Entry")
         add_entry_btn.clicked.connect(self._add_manual_entry)
         add_layout.addRow("", add_entry_btn)
 
@@ -361,7 +476,7 @@ class MainWindow(QMainWindow):
         export_layout = QHBoxLayout()
         export_layout.addStretch()
 
-        export_btn = QPushButton("Export to Excel")
+        export_btn = self._create_primary_button("Export to Excel")
         export_btn.clicked.connect(self._export_entries)
         export_layout.addWidget(export_btn)
 
@@ -402,10 +517,11 @@ class MainWindow(QMainWindow):
             self._entries_table.setItem(i, 5, QTableWidgetItem(
                 entry.description[:40] + "..." if len(entry.description) > 40 else entry.description
             ))
-            self._entries_table.setItem(i, 6, QTableWidgetItem(entry.status.value))
+            # Status badge
+            self._entries_table.setCellWidget(i, 6, self._create_status_badge(entry.status))
 
             # Delete button
-            delete_btn = QPushButton("Delete")
+            delete_btn = self._create_danger_button("Delete")
             delete_btn.clicked.connect(lambda checked, eid=entry.id: self._delete_entry(eid))
             self._entries_table.setCellWidget(i, 7, delete_btn)
 
@@ -544,8 +660,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(date_group)
 
         # Fetch button
-        fetch_btn = QPushButton("Fetch Meetings from Outlook")
-        fetch_btn.setStyleSheet("font-weight: bold; padding: 10px;")
+        fetch_btn = self._create_primary_button("Fetch Meetings from Outlook")
         fetch_btn.clicked.connect(self._fetch_outlook_meetings)
         layout.addWidget(fetch_btn)
 
@@ -568,12 +683,13 @@ class MainWindow(QMainWindow):
         self._events_table.horizontalHeader().setSectionResizeMode(
             6, QHeaderView.ResizeMode.Stretch
         )
+        self._events_table.verticalHeader().setVisible(False)
         layout.addWidget(self._events_table)
 
         # Bottom buttons
         btn_layout = QHBoxLayout()
 
-        add_selected_btn = QPushButton("Add Selected Meetings")
+        add_selected_btn = self._create_primary_button("Add Selected Meetings")
         add_selected_btn.clicked.connect(self._add_selected_meetings)
         btn_layout.addWidget(add_selected_btn)
 
@@ -679,26 +795,27 @@ class MainWindow(QMainWindow):
         project_map = {p.id: p for p in projects}
 
         for i, meeting in enumerate(self._outlook_meetings):
+            is_matched = meeting.match_confidence is not None and meeting.match_confidence > 0
+
             # Checkbox - pre-select matched meetings
             checkbox = QCheckBox()
-            checkbox.setChecked(meeting.match_confidence is not None and meeting.match_confidence > 0)
+            checkbox.setChecked(is_matched)
             self._events_table.setCellWidget(i, 0, checkbox)
 
             # Date
-            self._events_table.setItem(i, 1, QTableWidgetItem(
-                meeting.start_datetime.strftime("%d.%m.%Y")
-            ))
+            date_item = QTableWidgetItem(meeting.start_datetime.strftime("%d.%m.%Y"))
+            self._events_table.setItem(i, 1, date_item)
 
             # Time
-            self._events_table.setItem(i, 2, QTableWidgetItem(
-                meeting.display_time
-            ))
+            time_item = QTableWidgetItem(meeting.display_time)
+            self._events_table.setItem(i, 2, time_item)
 
             # Subject (truncate if long)
             subject = meeting.subject
             if len(subject) > 40:
                 subject = subject[:37] + "..."
-            self._events_table.setItem(i, 3, QTableWidgetItem(subject))
+            subject_item = QTableWidgetItem(subject)
+            self._events_table.setItem(i, 3, subject_item)
 
             # Hours (editable spinner)
             hours_spin = QSpinBox()
@@ -723,9 +840,19 @@ class MainWindow(QMainWindow):
             self._events_table.setCellWidget(i, 6, desc_edit)
 
             # Add single button
-            add_btn = QPushButton("Add")
+            add_btn = self._create_primary_button("Add")
+            add_btn.setStyleSheet(f"""
+                background-color: {self.COLORS['primary']};
+                color: white;
+                border: none;
+                padding: 4px 8px;
+            """)
             add_btn.clicked.connect(lambda checked, idx=i: self._add_single_meeting(idx))
             self._events_table.setCellWidget(i, 7, add_btn)
+
+            # Color-code matched meetings with light green background
+            if is_matched:
+                self._set_row_background(self._events_table, i, self.COLORS['success_light'])
 
     def _add_single_meeting(self, row: int) -> None:
         """Add a single meeting as a timesheet entry."""
@@ -895,7 +1022,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(matching_group)
 
         # Save button
-        save_btn = QPushButton("Save Settings")
+        save_btn = self._create_primary_button("Save Settings")
         save_btn.clicked.connect(self._save_settings)
         layout.addWidget(save_btn)
 
@@ -941,6 +1068,75 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Saved", "Settings saved!")
 
     # ==================== HELPERS ====================
+
+    def _create_status_badge(self, status: EntryStatus) -> QLabel:
+        """Create a colored status badge label."""
+        label = QLabel(status.value)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        if status == EntryStatus.EXPORTED:
+            label.setStyleSheet(f"""
+                background-color: {self.COLORS['success_light']};
+                color: {self.COLORS['success']};
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 11px;
+            """)
+        else:  # DRAFT
+            label.setStyleSheet(f"""
+                background-color: {self.COLORS['warning_light']};
+                color: #9D5D00;
+                padding: 2px 8px;
+                border-radius: 10px;
+                font-weight: bold;
+                font-size: 11px;
+            """)
+        return label
+
+    def _style_table(self, table: QTableWidget) -> None:
+        """Apply consistent styling to a table widget."""
+        table.setAlternatingRowColors(True)
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                alternate-background-color: {self.COLORS['gray_light']};
+            }}
+        """)
+        table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        table.verticalHeader().setVisible(False)
+
+    def _create_primary_button(self, text: str) -> QPushButton:
+        """Create a primary styled button."""
+        btn = QPushButton(text)
+        btn.setProperty("primary", True)
+        btn.setStyleSheet(f"""
+            background-color: {self.COLORS['primary']};
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            font-weight: bold;
+        """)
+        return btn
+
+    def _create_danger_button(self, text: str) -> QPushButton:
+        """Create a danger/delete styled button."""
+        btn = QPushButton(text)
+        btn.setProperty("danger", True)
+        btn.setStyleSheet(f"""
+            background-color: {self.COLORS['danger']};
+            color: white;
+            border: none;
+            padding: 4px 8px;
+        """)
+        return btn
+
+    def _set_row_background(self, table: QTableWidget, row: int, color: str) -> None:
+        """Set background color for all cells in a row."""
+        brush = QBrush(QColor(color))
+        for col in range(table.columnCount()):
+            item = table.item(row, col)
+            if item:
+                item.setBackground(brush)
 
     def _populate_month_selector(self, combo: QComboBox, include_custom: bool = False) -> None:
         """
