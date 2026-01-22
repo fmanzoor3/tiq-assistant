@@ -296,28 +296,23 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # Date range selector
-        range_layout = QHBoxLayout()
-        range_layout.addWidget(QLabel("From:"))
+        # Month selector
+        month_layout = QHBoxLayout()
+        month_layout.addWidget(QLabel("Month:"))
 
-        self._start_date = QDateEdit()
-        self._start_date.setDate(QDate.currentDate().addDays(-7))
-        self._start_date.setCalendarPopup(True)
-        range_layout.addWidget(self._start_date)
+        self._timesheet_month = QComboBox()
+        self._populate_month_selector(self._timesheet_month)
+        self._timesheet_month.currentIndexChanged.connect(self._refresh_timesheet)
+        month_layout.addWidget(self._timesheet_month)
 
-        range_layout.addWidget(QLabel("To:"))
+        month_layout.addStretch()
 
-        self._end_date = QDateEdit()
-        self._end_date.setDate(QDate.currentDate())
-        self._end_date.setCalendarPopup(True)
-        range_layout.addWidget(self._end_date)
+        # Summary label
+        self._timesheet_summary = QLabel("")
+        self._timesheet_summary.setStyleSheet("font-weight: bold; margin-left: 20px;")
+        month_layout.addWidget(self._timesheet_summary)
 
-        load_btn = QPushButton("Load Entries")
-        load_btn.clicked.connect(self._refresh_timesheet)
-        range_layout.addWidget(load_btn)
-
-        range_layout.addStretch()
-        layout.addLayout(range_layout)
+        layout.addLayout(month_layout)
 
         # Entries table
         self._entries_table = QTableWidget()
@@ -376,10 +371,24 @@ class MainWindow(QMainWindow):
 
     def _refresh_timesheet(self) -> None:
         """Refresh the timesheet entries table."""
-        start = self._start_date.date().toPyDate()
-        end = self._end_date.date().toPyDate()
+        # Get date range from month selector
+        month_data = self._timesheet_month.currentData()
+        if month_data:
+            start, end = month_data
+        else:
+            # Fallback to current month
+            today = date.today()
+            start = date(today.year, today.month, 1)
+            if today.month == 12:
+                end = date(today.year + 1, 1, 1) - timedelta(days=1)
+            else:
+                end = date(today.year, today.month + 1, 1) - timedelta(days=1)
 
         entries = self._store.get_entries(start_date=start, end_date=end)
+
+        # Update summary
+        total_hours = sum(e.hours for e in entries)
+        self._timesheet_summary.setText(f"Total: {len(entries)} entries, {total_hours} hours")
 
         self._entries_table.setRowCount(len(entries))
         for i, entry in enumerate(entries):
@@ -457,8 +466,17 @@ class MainWindow(QMainWindow):
 
     def _export_entries(self) -> None:
         """Export entries to Excel."""
-        start = self._start_date.date().toPyDate()
-        end = self._end_date.date().toPyDate()
+        # Get date range from month selector
+        month_data = self._timesheet_month.currentData()
+        if month_data:
+            start, end = month_data
+        else:
+            today = date.today()
+            start = date(today.year, today.month, 1)
+            if today.month == 12:
+                end = date(today.year + 1, 1, 1) - timedelta(days=1)
+            else:
+                end = date(today.year, today.month + 1, 1) - timedelta(days=1)
 
         entries = self._store.get_entries(start_date=start, end_date=end)
 
@@ -492,34 +510,35 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # Date range section
-        date_group = QGroupBox("Select Date Range")
+        # Month selector section
+        date_group = QGroupBox("Select Period")
         date_layout = QHBoxLayout(date_group)
 
-        date_layout.addWidget(QLabel("From:"))
+        date_layout.addWidget(QLabel("Month:"))
+        self._import_month = QComboBox()
+        self._populate_month_selector(self._import_month, include_custom=True)
+        self._import_month.currentIndexChanged.connect(self._on_import_month_changed)
+        date_layout.addWidget(self._import_month)
+
+        # Custom date range (initially hidden)
+        self._custom_range_widget = QWidget()
+        custom_layout = QHBoxLayout(self._custom_range_widget)
+        custom_layout.setContentsMargins(0, 0, 0, 0)
+
+        custom_layout.addWidget(QLabel("From:"))
         self._import_start_date = QDateEdit()
         self._import_start_date.setCalendarPopup(True)
         self._import_start_date.setDate(QDate.currentDate().addDays(-7))
-        date_layout.addWidget(self._import_start_date)
+        custom_layout.addWidget(self._import_start_date)
 
-        date_layout.addWidget(QLabel("To:"))
+        custom_layout.addWidget(QLabel("To:"))
         self._import_end_date = QDateEdit()
         self._import_end_date.setCalendarPopup(True)
         self._import_end_date.setDate(QDate.currentDate())
-        date_layout.addWidget(self._import_end_date)
+        custom_layout.addWidget(self._import_end_date)
 
-        # Quick date buttons
-        today_btn = QPushButton("Today")
-        today_btn.clicked.connect(self._set_import_today)
-        date_layout.addWidget(today_btn)
-
-        week_btn = QPushButton("This Week")
-        week_btn.clicked.connect(self._set_import_this_week)
-        date_layout.addWidget(week_btn)
-
-        month_btn = QPushButton("This Month")
-        month_btn.clicked.connect(self._set_import_this_month)
-        date_layout.addWidget(month_btn)
+        self._custom_range_widget.setVisible(False)
+        date_layout.addWidget(self._custom_range_widget)
 
         date_layout.addStretch()
         layout.addWidget(date_group)
@@ -571,28 +590,34 @@ class MainWindow(QMainWindow):
 
         return widget
 
-    def _set_import_today(self) -> None:
-        """Set import date range to today."""
-        today = QDate.currentDate()
-        self._import_start_date.setDate(today)
-        self._import_end_date.setDate(today)
+    def _on_import_month_changed(self) -> None:
+        """Handle month selector change - show/hide custom date range."""
+        current_text = self._import_month.currentText()
+        is_custom = current_text == "Custom Range..."
+        self._custom_range_widget.setVisible(is_custom)
 
-    def _set_import_this_week(self) -> None:
-        """Set import date range to this week (Mon-Fri)."""
-        today = QDate.currentDate()
-        # Go back to Monday
-        days_since_monday = today.dayOfWeek() - 1
-        monday = today.addDays(-days_since_monday)
-        friday = monday.addDays(4)
-        self._import_start_date.setDate(monday)
-        self._import_end_date.setDate(friday)
+    def _get_import_date_range(self) -> tuple[date, date]:
+        """Get the date range for calendar import based on selector."""
+        current_text = self._import_month.currentText()
 
-    def _set_import_this_month(self) -> None:
-        """Set import date range to this month."""
-        today = QDate.currentDate()
-        first_of_month = QDate(today.year(), today.month(), 1)
-        self._import_start_date.setDate(first_of_month)
-        self._import_end_date.setDate(today)
+        if current_text == "Custom Range...":
+            return (
+                self._import_start_date.date().toPyDate(),
+                self._import_end_date.date().toPyDate()
+            )
+
+        month_data = self._import_month.currentData()
+        if month_data:
+            return month_data
+
+        # Fallback to current month
+        today = date.today()
+        start = date(today.year, today.month, 1)
+        if today.month == 12:
+            end = date(today.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end = date(today.year, today.month + 1, 1) - timedelta(days=1)
+        return start, end
 
     def _fetch_outlook_meetings(self) -> None:
         """Fetch meetings from Outlook for the selected date range."""
@@ -607,8 +632,7 @@ class MainWindow(QMainWindow):
                 )
                 return
 
-            start_date = self._import_start_date.date().toPyDate()
-            end_date = self._import_end_date.date().toPyDate()
+            start_date, end_date = self._get_import_date_range()
 
             if start_date > end_date:
                 QMessageBox.warning(self, "Invalid Range", "Start date must be before end date.")
@@ -749,6 +773,9 @@ class MainWindow(QMainWindow):
         if add_btn:
             add_btn.setEnabled(False)
 
+        # Auto-refresh timesheet
+        self._refresh_timesheet()
+
         QMessageBox.information(self, "Added", f"Added entry for: {meeting.subject[:40]}")
 
     def _add_selected_meetings(self) -> None:
@@ -798,6 +825,8 @@ class MainWindow(QMainWindow):
                     count += 1
 
         if count > 0:
+            # Auto-refresh timesheet
+            self._refresh_timesheet()
             QMessageBox.information(self, "Added", f"Added {count} timesheet entries!")
         else:
             QMessageBox.information(self, "No Selection", "No meetings were selected.")
@@ -910,6 +939,43 @@ class MainWindow(QMainWindow):
 
         self._store.save_settings(settings)
         QMessageBox.information(self, "Saved", "Settings saved!")
+
+    # ==================== HELPERS ====================
+
+    def _populate_month_selector(self, combo: QComboBox, include_custom: bool = False) -> None:
+        """
+        Populate a month selector combo box with the last 12 months.
+
+        Args:
+            combo: The QComboBox to populate
+            include_custom: Whether to include a "Custom Range..." option
+        """
+        combo.clear()
+        today = date.today()
+
+        # Add months from current month going back 12 months
+        for i in range(12):
+            # Calculate month
+            year = today.year
+            month = today.month - i
+            while month <= 0:
+                month += 12
+                year -= 1
+
+            # Calculate date range for this month
+            first_day = date(year, month, 1)
+            if month == 12:
+                last_day = date(year + 1, 1, 1) - timedelta(days=1)
+            else:
+                last_day = date(year, month + 1, 1) - timedelta(days=1)
+
+            # Format display name
+            month_name = first_day.strftime("%B %Y")  # e.g., "January 2026"
+
+            combo.addItem(month_name, (first_day, last_day))
+
+        if include_custom:
+            combo.addItem("Custom Range...", None)
 
     # ==================== DATA LOADING ====================
 
