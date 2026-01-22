@@ -1,25 +1,50 @@
 # TIQ Assistant - Quick Start Guide
 
+## First-Time Setup (Work Laptop)
+
+If this is a fresh install or new machine, run these commands first:
+
+```cmd
+cd "C:\path\to\tiq-assistant"
+pip install -r requirements.txt
+pip install -e .
+```
+
+This installs all dependencies and registers the package so Python can find `tiq_assistant`.
+
+---
+
 ## Running the App
 
 ### Desktop App (System Tray)
 ```cmd
-cd "C:\Users\farid\OneDrive\Desktop\Code\Enerjisa\TIQ Assistant"
+cd "C:\path\to\tiq-assistant"
 python -m tiq_assistant
 ```
 
 This starts the app in your system tray (near the clock). Features:
 - Automatic popups at 12:30 (morning) and 18:30 (afternoon) on weekdays
 - Right-click tray icon for manual access
-- Syncs with Outlook calendar for meeting detection
+- Syncs with Outlook calendar for meeting detection (requires Outlook desktop)
+- Calendar Import tab to fetch meetings for any date range
 
 ### Web App (Streamlit)
 ```cmd
-cd "C:\Users\farid\OneDrive\Desktop\Code\Enerjisa\TIQ Assistant"
+cd "C:\path\to\tiq-assistant"
 python -m tiq_assistant web
 ```
 
 Opens a browser-based interface for managing projects and viewing entries.
+
+---
+
+## Updating the Code
+
+When you download a new version (ZIP from JupyterHub):
+
+1. Extract and replace the existing folder
+2. Run `pip install -e .` again to update the package registration
+3. Run `python -m tiq_assistant`
 
 ---
 
