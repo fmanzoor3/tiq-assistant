@@ -25,6 +25,7 @@ from tiq_assistant.exporters.excel_exporter import (
     ExcelExporter, get_monthly_export_path
 )
 from tiq_assistant.desktop.windows.day_entry_dialog import DayEntryDialog, SessionType
+from tiq_assistant.desktop.icon import create_app_icon
 
 
 class MainWindow(QMainWindow):
@@ -61,6 +62,7 @@ class MainWindow(QMainWindow):
     def _setup_ui(self) -> None:
         """Set up the main window UI."""
         self.setWindowTitle("TIQ Assistant")
+        self.setWindowIcon(create_app_icon())
         self.setMinimumSize(900, 700)
 
         # Central widget with tabs

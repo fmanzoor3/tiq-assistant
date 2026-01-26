@@ -9,6 +9,7 @@ from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from tiq_assistant.desktop.windows.day_entry_dialog import SessionType
+from tiq_assistant.desktop.icon import create_app_icon
 
 
 class TrayIconManager(QObject):
@@ -96,17 +97,8 @@ class TrayIconManager(QObject):
         )
 
     def _create_default_icon(self) -> QIcon:
-        """Create a default icon (clock emoji or simple colored square)."""
-        # For now, use a built-in icon. In production, load from resources
-        from PyQt6.QtWidgets import QStyle
-
-        app = QApplication.instance()
-        if app:
-            # Use a standard icon
-            return app.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
-
-        # Fallback to empty icon
-        return QIcon()
+        """Create the app icon using the shared function."""
+        return create_app_icon()
 
     def _create_menu(self) -> QMenu:
         """Create the context menu."""

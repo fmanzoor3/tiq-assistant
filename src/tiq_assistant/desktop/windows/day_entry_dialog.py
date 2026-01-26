@@ -19,6 +19,7 @@ from tiq_assistant.core.models import (
 from tiq_assistant.storage.sqlite_store import get_store
 from tiq_assistant.services.matching_service import MatchingService
 from tiq_assistant.integrations.outlook_reader import get_outlook_reader, OutlookNotAvailableError
+from tiq_assistant.desktop.icon import create_app_icon
 
 
 class SessionType(Enum):
@@ -121,6 +122,7 @@ class DayEntryDialog(QDialog):
         day_name = self._target_date.strftime("%A")
         date_str = self._target_date.strftime("%d %B %Y")
         self.setWindowTitle(f"Time Entry: {day_name}, {date_str}{session_label}")
+        self.setWindowIcon(create_app_icon())
         self.setMinimumSize(700, 500)
         self.setModal(True)
 
