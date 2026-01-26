@@ -480,27 +480,16 @@ class MainWindow(QMainWindow):
         ])
         self._workday_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._workday_table.setMaximumHeight(200)
-        self._workday_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._workday_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # Disable built-in selection to manage it manually with colors
+        self._workday_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self._workday_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._workday_table.cellClicked.connect(self._on_workday_clicked)
         self._style_table(self._workday_table)
-        # Custom style for workday table to show selection with border instead of color change
-        self._workday_table.setStyleSheet(f"""
-            QTableWidget {{
-                border: 1px solid {self.COLORS['gray']};
-                gridline-color: {self.COLORS['gray']};
-                background-color: white;
-                color: {self.COLORS['text']};
-                outline: none;
-            }}
-            QTableWidget::item:selected {{
-                border: 2px solid {self.COLORS['primary']};
-            }}
-        """)
         workday_layout.addWidget(self._workday_table)
 
-        # Track selected row index
+        # Track selected row index and row statuses for coloring
         self._selected_workday_row: int = -1
+        self._workday_row_colors: dict[int, str] = {}  # row -> base background color
 
         layout.addWidget(workday_group)
 
@@ -645,6 +634,7 @@ class MainWindow(QMainWindow):
         days_incomplete = 0
 
         self._workday_table.setRowCount(len(workdays))
+        self._workday_row_colors.clear()
 
         for i, (work_date, expected_hours) in enumerate(workdays):
             filled_hours = hours_by_date.get(work_date, 0)
@@ -672,7 +662,6 @@ class MainWindow(QMainWindow):
             holiday = holiday_service.get_holiday(work_date)
             if holiday and holiday.holiday_type == HolidayType.HALF_DAY:
                 day_item.setText(f"{day_name} (Yarım gün)")
-                day_item.setForeground(QBrush(QColor(self.COLORS['warning'])))
 
             # Expected hours
             expected_item = QTableWidgetItem(f"{expected_hours}h")
@@ -686,23 +675,28 @@ class MainWindow(QMainWindow):
             remaining_item = QTableWidgetItem(f"{remaining}h" if remaining > 0 else "-")
             self._workday_table.setItem(i, 4, remaining_item)
 
-            # Status column with clear indicator
+            # Determine status and row color
             if filled_hours >= expected_hours:
                 status_item = QTableWidgetItem("✓ Complete")
-                status_item.setForeground(QBrush(QColor(self.COLORS['success'])))
-                self._set_row_background(self._workday_table, i, self.COLORS['success_light'])
+                row_color = "#C8E6C9"  # Stronger green
+                self._workday_row_colors[i] = row_color
             elif filled_hours > 0:
                 status_item = QTableWidgetItem(f"Partial ({remaining}h left)")
-                status_item.setForeground(QBrush(QColor("#996600")))  # Dark yellow
-                self._set_row_background(self._workday_table, i, self.COLORS['warning_light'])
+                row_color = "#FFF9C4"  # Stronger yellow
+                self._workday_row_colors[i] = row_color
             elif work_date < date.today():
                 status_item = QTableWidgetItem("Missing")
-                status_item.setForeground(QBrush(QColor(self.COLORS['danger'])))
-                self._set_row_background(self._workday_table, i, self.COLORS['danger_light'])
+                row_color = "#FFCDD2"  # Stronger red
+                self._workday_row_colors[i] = row_color
             else:
                 status_item = QTableWidgetItem("Pending")
-                status_item.setForeground(QBrush(QColor(self.COLORS['text_secondary'])))
+                row_color = "#FFFFFF"  # White for pending
+                self._workday_row_colors[i] = row_color
+
             self._workday_table.setItem(i, 5, status_item)
+
+            # Apply row background color
+            self._set_row_background(self._workday_table, i, row_color)
 
         # Update progress summary
         remaining_total = max(0, total_expected - total_filled)
@@ -774,31 +768,44 @@ class MainWindow(QMainWindow):
             self._entries_table.setCellWidget(i, 6, delete_btn)
 
     def _highlight_selected_workday(self, selected_row: int) -> None:
-        """Highlight the selected row with a visual indicator (arrow/marker in date column)."""
+        """Highlight the selected row with visual indicators."""
+        # Selection highlight color (blue tint)
+        selection_color = "#BBDEFB"  # Light blue for selection
+
         for row in range(self._workday_table.rowCount()):
             date_item = self._workday_table.item(row, 0)
-            if date_item:
-                work_date = date_item.data(Qt.ItemDataRole.UserRole)
-                if work_date:
-                    # Add arrow indicator to selected row
-                    if row == selected_row:
-                        date_item.setText(f"► {work_date.strftime('%d.%m.%Y')}")
-                        # Make the row text bold
-                        font = date_item.font()
-                        font.setBold(True)
-                        for col in range(self._workday_table.columnCount()):
-                            item = self._workday_table.item(row, col)
-                            if item:
-                                item.setFont(font)
-                    else:
-                        date_item.setText(work_date.strftime("%d.%m.%Y"))
-                        # Remove bold from non-selected rows
-                        font = date_item.font()
-                        font.setBold(False)
-                        for col in range(self._workday_table.columnCount()):
-                            item = self._workday_table.item(row, col)
-                            if item:
-                                item.setFont(font)
+            if not date_item:
+                continue
+
+            work_date = date_item.data(Qt.ItemDataRole.UserRole)
+            if not work_date:
+                continue
+
+            is_selected = (row == selected_row)
+
+            # Update date text with arrow indicator
+            if is_selected:
+                date_item.setText(f"► {work_date.strftime('%d.%m.%Y')}")
+            else:
+                date_item.setText(work_date.strftime("%d.%m.%Y"))
+
+            # Set font weight
+            font = date_item.font()
+            font.setBold(is_selected)
+
+            # Apply to all columns
+            for col in range(self._workday_table.columnCount()):
+                item = self._workday_table.item(row, col)
+                if item:
+                    item.setFont(font)
+
+            # Apply background color - use selection color for selected row,
+            # otherwise use the stored status color
+            if is_selected:
+                self._set_row_background(self._workday_table, row, selection_color)
+            else:
+                base_color = self._workday_row_colors.get(row, "#FFFFFF")
+                self._set_row_background(self._workday_table, row, base_color)
 
     def _add_manual_entry(self) -> None:
         """Add a manual timesheet entry."""
