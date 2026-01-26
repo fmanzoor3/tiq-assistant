@@ -1371,7 +1371,6 @@ class MainWindow(QMainWindow):
 
     def _load_data(self) -> None:
         """Load initial data."""
-        self._refresh_dashboard()
-        self._refresh_projects()
         self._refresh_timesheet()
+        self._refresh_projects()
         self._load_settings()
