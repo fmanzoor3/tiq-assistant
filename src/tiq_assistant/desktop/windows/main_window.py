@@ -478,7 +478,6 @@ class MainWindow(QMainWindow):
             "Date", "Day", "Expected", "Filled", "Remaining", "Status"
         ])
         self._workday_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self._workday_table.setMaximumHeight(200)
         # Disable built-in selection to manage it manually with colors
         self._workday_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self._workday_table.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -496,9 +495,28 @@ class MainWindow(QMainWindow):
         self._entries_group = QGroupBox("Entries for Selected Day")
         entries_layout = QVBoxLayout(self._entries_group)
 
+        # Header with label and close button
+        header_layout = QHBoxLayout()
         self._selected_day_label = QLabel("Click a day above to view/add entries")
         self._selected_day_label.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
-        entries_layout.addWidget(self._selected_day_label)
+        header_layout.addWidget(self._selected_day_label)
+        header_layout.addStretch()
+
+        close_btn = QPushButton("✕ Close")
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                color: {self.COLORS['text_secondary']};
+                padding: 2px 8px;
+            }}
+            QPushButton:hover {{
+                color: {self.COLORS['danger']};
+            }}
+        """)
+        close_btn.clicked.connect(self._close_entries_section)
+        header_layout.addWidget(close_btn)
+        entries_layout.addLayout(header_layout)
 
         self._entries_table = QTableWidget()
         self._entries_table.setColumnCount(7)
@@ -593,15 +611,10 @@ class MainWindow(QMainWindow):
         # Update workday overview
         self._refresh_workday_overview(start, entries)
 
-        # Clear selected day when month changes
+        # Clear selected day when month changes and hide entries section
         self._selected_workday = None
         self._selected_workday_row = -1
-        self._entries_table.setRowCount(0)
-        self._entries_table.setVisible(False)
-        self._add_entry_widget.setVisible(False)
-        self._selected_day_label.setText("Click a day above to view/add entries")
-        self._selected_day_label.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
-        self._selected_day_label.setVisible(True)
+        self._entries_group.setVisible(False)
 
         # Refresh project dropdown for add form
         self._entry_project.clear()
@@ -707,7 +720,12 @@ class MainWindow(QMainWindow):
         self._workday_progress.setText(progress_text)
 
     def _on_workday_clicked(self, row: int, col: int) -> None:
-        """Handle workday row click - show entries for that day."""
+        """Handle workday row click - show entries for that day, or deselect if same row."""
+        # If clicking the same row, deselect it
+        if row == self._selected_workday_row:
+            self._close_entries_section()
+            return
+
         # Get the date from the first column
         date_item = self._workday_table.item(row, 0)
         if not date_item:
@@ -723,6 +741,9 @@ class MainWindow(QMainWindow):
         self._selected_workday = selected_date
         self._selected_workday_row = row
         self._entry_date.setDate(QDate(selected_date.year, selected_date.month, selected_date.day))
+
+        # Show entries section
+        self._entries_group.setVisible(True)
 
         # Get entries for this date
         entries = self._store.get_entries(start_date=selected_date, end_date=selected_date)
@@ -805,6 +826,18 @@ class MainWindow(QMainWindow):
             else:
                 base_color = self._workday_row_colors.get(row, "#FFFFFF")
                 self._set_row_background(self._workday_table, row, base_color)
+
+    def _close_entries_section(self) -> None:
+        """Close/hide the entries section and deselect the workday row."""
+        # Clear selection
+        if self._selected_workday_row >= 0:
+            self._highlight_selected_workday(-1)  # Deselect all
+
+        self._selected_workday = None
+        self._selected_workday_row = -1
+
+        # Hide entries section
+        self._entries_group.setVisible(False)
 
     def _add_manual_entry(self) -> None:
         """Add a manual timesheet entry."""
