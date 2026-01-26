@@ -474,9 +474,9 @@ class MainWindow(QMainWindow):
 
         # Workday table showing each day
         self._workday_table = QTableWidget()
-        self._workday_table.setColumnCount(5)
+        self._workday_table.setColumnCount(6)
         self._workday_table.setHorizontalHeaderLabels([
-            "Date", "Day", "Expected", "Filled", "Remaining"
+            "Date", "Day", "Expected", "Filled", "Remaining", "Status"
         ])
         self._workday_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._workday_table.setMaximumHeight(200)
@@ -487,64 +487,85 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(workday_group)
 
-        # Entries table
+        # Entries section (shown when a day is selected)
+        self._entries_group = QGroupBox("Entries for Selected Day")
+        entries_layout = QVBoxLayout(self._entries_group)
+
+        self._selected_day_label = QLabel("Click a day above to view/add entries")
+        self._selected_day_label.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
+        entries_layout.addWidget(self._selected_day_label)
+
         self._entries_table = QTableWidget()
-        self._entries_table.setColumnCount(8)
+        self._entries_table.setColumnCount(7)
         self._entries_table.setHorizontalHeaderLabels([
-            "Date", "Project", "Ticket", "Hours", "Activity", "Description", "Status", "Actions"
+            "Project", "Ticket", "Hours", "Activity", "Description", "Status", "Actions"
         ])
         self._entries_table.horizontalHeader().setSectionResizeMode(
-            5, QHeaderView.ResizeMode.Stretch
+            4, QHeaderView.ResizeMode.Stretch  # Description column
         )
+        self._entries_table.setMaximumHeight(150)
         self._style_table(self._entries_table)
-        layout.addWidget(self._entries_table)
+        self._entries_table.setVisible(False)  # Hidden until a day is selected
+        entries_layout.addWidget(self._entries_table)
 
-        # Add entry form
-        add_group = QGroupBox("Add Manual Entry")
-        add_layout = QFormLayout(add_group)
+        # Add entry form (inline, shown when day selected)
+        self._add_entry_widget = QWidget()
+        add_layout = QHBoxLayout(self._add_entry_widget)
+        add_layout.setContentsMargins(0, 5, 0, 0)
 
         self._entry_date = QDateEdit()
         self._entry_date.setDate(QDate.currentDate())
         self._entry_date.setCalendarPopup(True)
-        add_layout.addRow("Date:", self._entry_date)
+        self._entry_date.setVisible(False)  # Hidden, set programmatically
 
         self._entry_project = QComboBox()
-        add_layout.addRow("Project:", self._entry_project)
+        self._entry_project.setMinimumWidth(200)
+        add_layout.addWidget(QLabel("Project:"))
+        add_layout.addWidget(self._entry_project)
 
         self._entry_hours = QSpinBox()
-        self._entry_hours.setRange(1, 24)
+        self._entry_hours.setRange(1, 8)
         self._entry_hours.setValue(1)
-        add_layout.addRow("Hours:", self._entry_hours)
+        add_layout.addWidget(QLabel("Hours:"))
+        add_layout.addWidget(self._entry_hours)
 
         self._entry_activity = QComboBox()
         for code in ActivityCode:
             self._entry_activity.addItem(code.value, code)
-        add_layout.addRow("Activity Code:", self._entry_activity)
+        add_layout.addWidget(QLabel("Activity:"))
+        add_layout.addWidget(self._entry_activity)
 
         self._entry_description = QLineEdit()
-        self._entry_description.setPlaceholderText("What did you work on?")
-        add_layout.addRow("Description:", self._entry_description)
+        self._entry_description.setPlaceholderText("Description...")
+        self._entry_description.setMinimumWidth(150)
+        add_layout.addWidget(self._entry_description)
 
-        add_entry_btn = self._create_primary_button("Add Entry")
+        add_entry_btn = self._create_primary_button("Add")
         add_entry_btn.clicked.connect(self._add_manual_entry)
-        add_layout.addRow("", add_entry_btn)
+        add_layout.addWidget(add_entry_btn)
 
-        layout.addWidget(add_group)
+        self._add_entry_widget.setVisible(False)  # Hidden until a day is selected
+        entries_layout.addWidget(self._add_entry_widget)
+
+        layout.addWidget(self._entries_group)
 
         # Export section
         export_layout = QHBoxLayout()
         export_layout.addStretch()
 
-        export_btn = self._create_primary_button("Export to Excel")
+        export_btn = self._create_primary_button("Export Month to Excel")
         export_btn.clicked.connect(self._export_entries)
         export_layout.addWidget(export_btn)
 
         layout.addLayout(export_layout)
 
+        # Track currently selected date
+        self._selected_workday: date | None = None
+
         return widget
 
     def _refresh_timesheet(self) -> None:
-        """Refresh the timesheet entries table and workday overview."""
+        """Refresh the workday overview for the selected month."""
         # Get date range from month selector
         month_data = self._timesheet_month.currentData()
         if month_data:
@@ -567,27 +588,15 @@ class MainWindow(QMainWindow):
         # Update workday overview
         self._refresh_workday_overview(start, entries)
 
-        self._entries_table.setRowCount(len(entries))
-        for i, entry in enumerate(entries):
-            self._entries_table.setItem(i, 0, QTableWidgetItem(
-                entry.entry_date.strftime("%d.%m.%Y")
-            ))
-            self._entries_table.setItem(i, 1, QTableWidgetItem(entry.project_name or "-"))
-            self._entries_table.setItem(i, 2, QTableWidgetItem(entry.ticket_number or "-"))
-            self._entries_table.setItem(i, 3, QTableWidgetItem(str(entry.hours)))
-            self._entries_table.setItem(i, 4, QTableWidgetItem(entry.activity_code.value))
-            self._entries_table.setItem(i, 5, QTableWidgetItem(
-                entry.description[:40] + "..." if len(entry.description) > 40 else entry.description
-            ))
-            # Status badge
-            self._entries_table.setCellWidget(i, 6, self._create_status_badge(entry.status))
+        # Clear selected day when month changes
+        self._selected_workday = None
+        self._entries_table.setRowCount(0)
+        self._entries_table.setVisible(False)
+        self._add_entry_widget.setVisible(False)
+        self._selected_day_label.setText("Click a day above to view/add entries")
+        self._selected_day_label.setVisible(True)
 
-            # Delete button
-            delete_btn = self._create_danger_button("Delete")
-            delete_btn.clicked.connect(lambda checked, eid=entry.id: self._delete_entry(eid))
-            self._entries_table.setCellWidget(i, 7, delete_btn)
-
-        # Also refresh project dropdown for add form
+        # Refresh project dropdown for add form
         self._entry_project.clear()
         self._entry_project.addItem("-- Select Project --", None)
         for project in self._store.get_projects():
@@ -655,20 +664,26 @@ class MainWindow(QMainWindow):
             self._workday_table.setItem(i, 3, filled_item)
 
             # Remaining hours
-            remaining_item = QTableWidgetItem(f"{remaining}h" if remaining > 0 else "✓")
+            remaining_item = QTableWidgetItem(f"{remaining}h" if remaining > 0 else "-")
             self._workday_table.setItem(i, 4, remaining_item)
 
-            # Color-code the row based on status
+            # Status column with clear indicator
             if filled_hours >= expected_hours:
-                # Complete - green
+                status_item = QTableWidgetItem("✓ Complete")
+                status_item.setForeground(QBrush(QColor(self.COLORS['success'])))
                 self._set_row_background(self._workday_table, i, self.COLORS['success_light'])
-                remaining_item.setForeground(QBrush(QColor(self.COLORS['success'])))
             elif filled_hours > 0:
-                # Partial - yellow
+                status_item = QTableWidgetItem(f"Partial ({remaining}h left)")
+                status_item.setForeground(QBrush(QColor("#996600")))  # Dark yellow
                 self._set_row_background(self._workday_table, i, self.COLORS['warning_light'])
             elif work_date < date.today():
-                # Past unfilled - light red
+                status_item = QTableWidgetItem("Missing")
+                status_item.setForeground(QBrush(QColor(self.COLORS['danger'])))
                 self._set_row_background(self._workday_table, i, self.COLORS['danger_light'])
+            else:
+                status_item = QTableWidgetItem("Pending")
+                status_item.setForeground(QBrush(QColor(self.COLORS['text_secondary'])))
+            self._workday_table.setItem(i, 5, status_item)
 
         # Update progress summary
         remaining_total = max(0, total_expected - total_filled)
@@ -680,29 +695,71 @@ class MainWindow(QMainWindow):
         self._workday_progress.setText(progress_text)
 
     def _on_workday_selected(self) -> None:
-        """Handle workday row selection - pre-fill the date in add entry form."""
+        """Handle workday row selection - show entries for that day."""
         selected_rows = self._workday_table.selectedItems()
-        if selected_rows:
-            # Get the date from the first column
-            date_item = self._workday_table.item(selected_rows[0].row(), 0)
-            if date_item:
-                selected_date = date_item.data(Qt.ItemDataRole.UserRole)
-                if selected_date:
-                    self._entry_date.setDate(QDate(selected_date.year, selected_date.month, selected_date.day))
+        if not selected_rows:
+            return
 
-                    # Also calculate suggested hours based on remaining
-                    holiday_service = get_holiday_service()
-                    expected = holiday_service.get_expected_hours(selected_date)
+        # Get the date from the first column
+        date_item = self._workday_table.item(selected_rows[0].row(), 0)
+        if not date_item:
+            return
 
-                    # Get current filled hours for this date
-                    entries = self._store.get_entries(start_date=selected_date, end_date=selected_date)
-                    filled = sum(e.hours for e in entries)
-                    remaining = max(1, expected - filled)
+        selected_date = date_item.data(Qt.ItemDataRole.UserRole)
+        if not selected_date:
+            return
 
-                    self._entry_hours.setValue(min(remaining, 8))
+        self._selected_workday = selected_date
+        self._entry_date.setDate(QDate(selected_date.year, selected_date.month, selected_date.day))
+
+        # Get entries for this date
+        entries = self._store.get_entries(start_date=selected_date, end_date=selected_date)
+
+        # Calculate suggested hours based on remaining
+        holiday_service = get_holiday_service()
+        expected = holiday_service.get_expected_hours(selected_date)
+        filled = sum(e.hours for e in entries)
+        remaining = max(1, expected - filled)
+
+        self._entry_hours.setValue(min(remaining, 8))
+
+        # Update the selected day label
+        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        day_name = day_names[selected_date.weekday()]
+        status = "Complete" if filled >= expected else f"{remaining}h remaining"
+        self._selected_day_label.setText(
+            f"{selected_date.strftime('%d.%m.%Y')} ({day_name}) - {filled}h / {expected}h ({status})"
+        )
+        self._selected_day_label.setStyleSheet(f"font-weight: bold; color: {self.COLORS['text']};")
+
+        # Show entries table and add form
+        self._entries_table.setVisible(True)
+        self._add_entry_widget.setVisible(True)
+
+        # Populate entries table for this day
+        self._entries_table.setRowCount(len(entries))
+        for i, entry in enumerate(entries):
+            self._entries_table.setItem(i, 0, QTableWidgetItem(entry.project_name or "-"))
+            self._entries_table.setItem(i, 1, QTableWidgetItem(entry.ticket_number or "-"))
+            self._entries_table.setItem(i, 2, QTableWidgetItem(str(entry.hours)))
+            self._entries_table.setItem(i, 3, QTableWidgetItem(entry.activity_code.value))
+            self._entries_table.setItem(i, 4, QTableWidgetItem(
+                entry.description[:50] + "..." if len(entry.description) > 50 else entry.description
+            ))
+            # Status badge
+            self._entries_table.setCellWidget(i, 5, self._create_status_badge(entry.status))
+
+            # Delete button
+            delete_btn = self._create_danger_button("Delete")
+            delete_btn.clicked.connect(lambda checked, eid=entry.id: self._delete_entry(eid))
+            self._entries_table.setCellWidget(i, 6, delete_btn)
 
     def _add_manual_entry(self) -> None:
         """Add a manual timesheet entry."""
+        if self._selected_workday is None:
+            QMessageBox.warning(self, "Error", "Please select a day first.")
+            return
+
         project_id = self._entry_project.currentData()
         description = self._entry_description.text().strip()
 
@@ -715,7 +772,7 @@ class MainWindow(QMainWindow):
 
         entry = TimesheetEntry(
             consultant_id=settings.consultant_id,
-            entry_date=self._entry_date.date().toPyDate(),
+            entry_date=self._selected_workday,
             hours=self._entry_hours.value(),
             ticket_number=project.ticket_number if project else None,
             project_name=project.name if project else None,
@@ -732,11 +789,48 @@ class MainWindow(QMainWindow):
         if project:
             self._store.update_recent_project(project)
 
-        # Clear and refresh
+        # Clear description and refresh
         self._entry_description.clear()
-        self._refresh_timesheet()
 
-        QMessageBox.information(self, "Success", "Entry added!")
+        # Refresh the workday overview (to update filled hours)
+        self._refresh_timesheet_keeping_selection()
+
+    def _refresh_timesheet_keeping_selection(self) -> None:
+        """Refresh timesheet but keep the currently selected day."""
+        saved_date = self._selected_workday
+
+        # Get date range from month selector
+        month_data = self._timesheet_month.currentData()
+        if month_data:
+            start, end = month_data
+        else:
+            today = date.today()
+            start = date(today.year, today.month, 1)
+            if today.month == 12:
+                end = date(today.year + 1, 1, 1) - timedelta(days=1)
+            else:
+                end = date(today.year, today.month + 1, 1) - timedelta(days=1)
+
+        entries = self._store.get_entries(start_date=start, end_date=end)
+
+        # Update summary
+        total_hours = sum(e.hours for e in entries)
+        self._timesheet_summary.setText(f"Total: {len(entries)} entries, {total_hours} hours")
+
+        # Update workday overview
+        self._refresh_workday_overview(start, entries)
+
+        # Restore selected day and refresh its entries
+        if saved_date:
+            self._selected_workday = saved_date
+            # Find and select the row in workday table
+            for row in range(self._workday_table.rowCount()):
+                item = self._workday_table.item(row, 0)
+                if item and item.data(Qt.ItemDataRole.UserRole) == saved_date:
+                    self._workday_table.selectRow(row)
+                    break
+            # Manually trigger selection update
+            self._on_workday_selected()
 
     def _delete_entry(self, entry_id: str) -> None:
         """Delete a timesheet entry."""
@@ -748,7 +842,7 @@ class MainWindow(QMainWindow):
 
         if reply == QMessageBox.StandardButton.Yes:
             self._store.delete_entry(entry_id)
-            self._refresh_timesheet()
+            self._refresh_timesheet_keeping_selection()
 
     def _export_entries(self) -> None:
         """Export entries to Excel."""
