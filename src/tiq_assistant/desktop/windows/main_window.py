@@ -338,9 +338,9 @@ class MainWindow(QMainWindow):
         month_layout.addWidget(self._timesheet_month)
 
         # Fetch from Outlook button
-        fetch_btn = self._create_primary_button("📅 Fetch from Outlook")
-        fetch_btn.clicked.connect(self._fetch_outlook_for_month)
-        month_layout.addWidget(fetch_btn)
+        self._fetch_btn = self._create_primary_button("📅 Fetch from Outlook")
+        self._fetch_btn.clicked.connect(self._fetch_outlook_for_month)
+        month_layout.addWidget(self._fetch_btn)
 
         month_layout.addStretch()
 
@@ -400,7 +400,9 @@ class MainWindow(QMainWindow):
         self._events_table.horizontalHeader().setSectionResizeMode(
             7, QHeaderView.ResizeMode.Stretch
         )
-        self._events_table.setMaximumHeight(200)
+        # Set minimum row height to prevent text cutoff
+        self._events_table.verticalHeader().setDefaultSectionSize(36)
+        self._events_table.setMaximumHeight(250)
         self._style_table(self._events_table)
         meetings_layout.addWidget(self._events_table)
 
@@ -773,6 +775,14 @@ class MainWindow(QMainWindow):
 
     def _fetch_outlook_for_month(self) -> None:
         """Fetch meetings from Outlook for the selected month."""
+        # Show loading state
+        self._fetch_btn.setEnabled(False)
+        self._fetch_btn.setText("⏳ Fetching...")
+        self._outlook_status.setText("Connecting to Outlook...")
+        self._outlook_status.setStyleSheet(f"color: {self.COLORS['primary']};")
+        # Force UI update before blocking operation
+        QApplication.processEvents()
+
         try:
             reader = get_outlook_reader()
 
@@ -797,11 +807,14 @@ class MainWindow(QMainWindow):
                     end_date = date(today.year, today.month + 1, 1) - timedelta(days=1)
 
             self._outlook_status.setText("Fetching meetings from Outlook...")
-            self._outlook_status.setStyleSheet(f"color: {self.COLORS['primary']};")
+            QApplication.processEvents()
 
             # Fetch meetings
             meetings = reader.get_meetings_for_date_range(start_date, end_date)
             self._outlook_meetings = meetings
+
+            self._outlook_status.setText("Matching meetings to projects...")
+            QApplication.processEvents()
 
             # Match meetings to projects
             for meeting in meetings:
@@ -831,6 +844,10 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Error", f"Failed to fetch meetings: {e}")
             self._outlook_status.setText(f"Error: {e}")
             self._outlook_status.setStyleSheet(f"color: {self.COLORS['danger']};")
+        finally:
+            # Restore button state
+            self._fetch_btn.setEnabled(True)
+            self._fetch_btn.setText("📅 Fetch from Outlook")
 
     def _add_manual_entry(self) -> None:
         """Add a manual timesheet entry."""
