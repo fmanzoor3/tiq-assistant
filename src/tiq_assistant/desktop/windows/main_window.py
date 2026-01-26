@@ -142,7 +142,6 @@ class MainWindow(QMainWindow):
             QTableWidget::item {{
                 padding: 4px;
                 color: {self.COLORS['text']};
-                background-color: white;
             }}
             QHeaderView::section {{
                 background-color: {self.COLORS['gray_light']};
