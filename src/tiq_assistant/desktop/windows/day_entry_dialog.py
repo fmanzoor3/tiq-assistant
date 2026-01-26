@@ -385,7 +385,7 @@ class DayEntryDialog(QDialog):
 
     def _refresh_entries(self) -> None:
         """Refresh the entries table."""
-        entries = self._store.get_entries_for_date(self._target_date)
+        entries = self._store.get_entries(start_date=self._target_date, end_date=self._target_date)
 
         # Filter by session if needed
         if self._session == SessionType.MORNING:
@@ -493,7 +493,7 @@ class DayEntryDialog(QDialog):
 
     def _update_progress(self) -> None:
         """Update the progress indicator."""
-        entries = self._store.get_entries_for_date(self._target_date)
+        entries = self._store.get_entries(start_date=self._target_date, end_date=self._target_date)
         filled_hours = sum(e.hours for e in entries)
         remaining = max(0, self._target_hours - filled_hours)
 
