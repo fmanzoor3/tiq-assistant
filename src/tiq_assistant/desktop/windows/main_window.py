@@ -10,7 +10,8 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QSpinBox, QComboBox, QFormLayout, QGroupBox,
     QMessageBox, QFileDialog, QDateEdit, QTextEdit, QCheckBox,
-    QSplitter, QFrame, QScrollArea, QSizePolicy, QAbstractItemView
+    QSplitter, QFrame, QScrollArea, QSizePolicy, QAbstractItemView,
+    QApplication
 )
 from PyQt6.QtCore import Qt, QDate
 from PyQt6.QtGui import QFont, QColor, QBrush
