@@ -382,7 +382,8 @@ class MainWindow(QMainWindow):
         self._selected_workday_row: int = -1
         self._workday_row_colors: dict[int, str] = {}  # row -> base background color
 
-        layout.addWidget(workday_group)
+        # Add workday group with stretch factor so it expands to fill space
+        layout.addWidget(workday_group, 1)
 
         # Initialize outlook meetings list (for use in day entry dialog)
         self._outlook_meetings = []
@@ -401,8 +402,6 @@ class MainWindow(QMainWindow):
         export_layout.addWidget(export_btn)
 
         layout.addLayout(export_layout)
-
-        layout.addStretch()
 
         return widget
 

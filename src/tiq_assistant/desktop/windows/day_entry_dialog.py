@@ -128,9 +128,17 @@ class DayEntryDialog(QDialog):
         self.setStyleSheet(f"""
             QDialog {{
                 background-color: white;
+                color: {self.COLORS['text']};
+            }}
+            QWidget {{
+                color: {self.COLORS['text']};
+            }}
+            QLabel {{
+                color: {self.COLORS['text']};
             }}
             QGroupBox {{
                 font-weight: bold;
+                color: {self.COLORS['text']};
                 border: 1px solid {self.COLORS['gray']};
                 border-radius: 4px;
                 margin-top: 12px;
@@ -140,22 +148,45 @@ class DayEntryDialog(QDialog):
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px;
+                color: {self.COLORS['text']};
             }}
             QTableWidget {{
                 border: 1px solid {self.COLORS['gray']};
                 gridline-color: {self.COLORS['gray']};
                 background-color: white;
+                color: {self.COLORS['text']};
             }}
             QTableWidget::item {{
                 padding: 4px;
+                color: {self.COLORS['text']};
             }}
             QHeaderView::section {{
                 background-color: {self.COLORS['gray_light']};
+                color: {self.COLORS['text']};
                 padding: 6px;
                 border: none;
                 border-right: 1px solid {self.COLORS['gray']};
                 border-bottom: 1px solid {self.COLORS['gray']};
                 font-weight: bold;
+            }}
+            QComboBox {{
+                color: {self.COLORS['text']};
+                background-color: white;
+            }}
+            QComboBox QAbstractItemView {{
+                color: {self.COLORS['text']};
+                background-color: white;
+            }}
+            QLineEdit {{
+                color: {self.COLORS['text']};
+                background-color: white;
+            }}
+            QSpinBox {{
+                color: {self.COLORS['text']};
+                background-color: white;
+            }}
+            QCheckBox {{
+                color: {self.COLORS['text']};
             }}
         """)
 
