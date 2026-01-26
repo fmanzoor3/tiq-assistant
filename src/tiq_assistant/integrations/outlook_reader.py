@@ -159,49 +159,38 @@ class OutlookReader:
             start_datetime = datetime.combine(start_date, datetime.min.time())
             end_datetime = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
 
-            # Try multiple date formats for Outlook Restrict filter
-            # Different Outlook versions/locales may need different formats
-            restriction_formats = [
-                # Format 1: MM/DD/YYYY (US format)
-                (start_date.strftime("%m/%d/%Y"), (end_date + timedelta(days=1)).strftime("%m/%d/%Y")),
-                # Format 2: YYYY-MM-DD (ISO format)
-                (start_date.strftime("%Y-%m-%d"), (end_date + timedelta(days=1)).strftime("%Y-%m-%d")),
-                # Format 3: DD/MM/YYYY (European format)
-                (start_date.strftime("%d/%m/%Y"), (end_date + timedelta(days=1)).strftime("%d/%m/%Y")),
-            ]
+            # Use MM/DD/YYYY format for Outlook Restrict filter
+            start_str = start_date.strftime("%m/%d/%Y")
+            end_str = (end_date + timedelta(days=1)).strftime("%m/%d/%Y")
 
-            filtered_items = None
-            for start_str, end_str in restriction_formats:
-                try:
-                    restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
-                    logger.info(f"Trying Outlook restriction: {restriction}")
-                    filtered_items = items.Restrict(restriction)
-                    # Try to access first item to verify filter works
-                    count = filtered_items.Count
-                    logger.info(f"Filter returned {count} items")
-                    if count > 0:
-                        break
-                except Exception as e:
-                    logger.warning(f"Filter format failed: {e}")
-                    continue
+            restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
+            logger.info(f"Outlook restriction: {restriction}")
 
-            if filtered_items is None:
-                logger.warning("All filter formats failed, falling back to manual filtering")
-                filtered_items = items
+            filtered_items = items.Restrict(restriction)
 
-            # Count total items for debugging
+            # When IncludeRecurrences=True, Count returns INT_MAX and normal iteration
+            # doesn't work. We need to use Find/FindNext pattern instead.
             item_count = 0
             skipped_count = 0
-            for item in filtered_items:
+
+            # Use GetFirst/GetNext pattern which works with recurring items
+            item = filtered_items.GetFirst()
+            while item is not None:
                 item_count += 1
                 try:
-                    # Manual date filtering as fallback
+                    # Manual date filtering as extra safety
                     item_start = datetime(
                         item.Start.year, item.Start.month, item.Start.day,
                         item.Start.hour, item.Start.minute, item.Start.second
                     )
-                    if item_start < start_datetime or item_start >= end_datetime:
+
+                    # Stop if we've gone past the end date (items are sorted)
+                    if item_start >= end_datetime:
+                        break
+
+                    if item_start < start_datetime:
                         skipped_count += 1
+                        item = filtered_items.GetNext()
                         continue
 
                     meeting = self._parse_calendar_item(item)
@@ -209,7 +198,13 @@ class OutlookReader:
                         meetings.append(meeting)
                 except Exception as e:
                     logger.warning(f"Failed to parse calendar item: {e}")
-                    continue
+
+                item = filtered_items.GetNext()
+
+                # Safety limit to prevent infinite loops
+                if item_count > 1000:
+                    logger.warning("Reached 1000 items limit, stopping")
+                    break
 
             logger.info(f"Found {len(meetings)} meetings from {start_date} to {end_date} (checked {item_count} items, skipped {skipped_count})")
             return meetings
