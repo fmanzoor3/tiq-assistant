@@ -73,11 +73,9 @@ class MainWindow(QMainWindow):
         self._tabs = QTabWidget()
         layout.addWidget(self._tabs)
 
-        # Create tabs
-        self._tabs.addTab(self._create_dashboard_tab(), "Dashboard")
-        self._tabs.addTab(self._create_projects_tab(), "Projects")
+        # Create tabs - Timesheet first
         self._tabs.addTab(self._create_timesheet_tab(), "Timesheet")
-        self._tabs.addTab(self._create_import_tab(), "Calendar Import")
+        self._tabs.addTab(self._create_projects_tab(), "Projects")
         self._tabs.addTab(self._create_settings_tab(), "Settings")
 
     def _apply_styles(self) -> None:
@@ -207,123 +205,6 @@ class MainWindow(QMainWindow):
             }}
         """)
 
-    # ==================== DASHBOARD TAB ====================
-
-    def _create_dashboard_tab(self) -> QWidget:
-        """Create the dashboard tab."""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        # Stats section
-        stats_layout = QHBoxLayout()
-
-        # Active Projects
-        self._projects_stat = self._create_stat_card("Active Projects", "0")
-        stats_layout.addWidget(self._projects_stat)
-
-        # Hours This Week
-        self._hours_stat = self._create_stat_card("Hours This Week", "0")
-        stats_layout.addWidget(self._hours_stat)
-
-        # Draft Entries
-        self._drafts_stat = self._create_stat_card("Draft Entries", "0")
-        stats_layout.addWidget(self._drafts_stat)
-
-        layout.addLayout(stats_layout)
-
-        # Recent entries section
-        layout.addWidget(QLabel("Recent Entries (Last 7 Days)"))
-
-        self._recent_table = QTableWidget()
-        self._recent_table.setColumnCount(6)
-        self._recent_table.setHorizontalHeaderLabels([
-            "Date", "Project", "Hours", "Activity", "Description", "Status"
-        ])
-        self._recent_table.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeMode.Stretch
-        )
-        self._style_table(self._recent_table)
-        layout.addWidget(self._recent_table)
-
-        # Refresh button
-        refresh_btn = self._create_primary_button("Refresh")
-        refresh_btn.clicked.connect(self._refresh_dashboard)
-        layout.addWidget(refresh_btn)
-
-        return widget
-
-    def _create_stat_card(self, title: str, value: str) -> QFrame:
-        """Create a stat card widget."""
-        frame = QFrame()
-        frame.setFrameShape(QFrame.Shape.StyledPanel)
-        frame.setMinimumHeight(80)
-
-        layout = QVBoxLayout(frame)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        value_label = QLabel(value)
-        value_label.setObjectName(f"stat_value_{title.replace(' ', '_')}")
-        value_font = QFont()
-        value_font.setPointSize(24)
-        value_font.setBold(True)
-        value_label.setFont(value_font)
-        value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        title_label = QLabel(title)
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        layout.addWidget(value_label)
-        layout.addWidget(title_label)
-
-        return frame
-
-    def _refresh_dashboard(self) -> None:
-        """Refresh dashboard data."""
-        # Update stats
-        projects = self._store.get_projects()
-        today = date.today()
-        week_start = today - timedelta(days=today.weekday())
-        week_entries = self._store.get_entries(start_date=week_start, end_date=today)
-
-        # Find and update stat labels
-        self._projects_stat.findChild(
-            QLabel, "stat_value_Active_Projects"
-        ).setText(str(len(projects)))
-
-        week_hours = sum(e.hours for e in week_entries)
-        self._hours_stat.findChild(
-            QLabel, "stat_value_Hours_This_Week"
-        ).setText(str(week_hours))
-
-        draft_count = len([e for e in week_entries if e.status == EntryStatus.DRAFT])
-        self._drafts_stat.findChild(
-            QLabel, "stat_value_Draft_Entries"
-        ).setText(str(draft_count))
-
-        # Update recent entries table
-        recent = self._store.get_entries(
-            start_date=today - timedelta(days=7),
-            end_date=today
-        )
-
-        self._recent_table.setRowCount(len(recent))
-        for i, entry in enumerate(recent):
-            self._recent_table.setItem(i, 0, QTableWidgetItem(
-                entry.entry_date.strftime("%d.%m.%Y")
-            ))
-            self._recent_table.setItem(i, 1, QTableWidgetItem(
-                entry.project_name or "-"
-            ))
-            self._recent_table.setItem(i, 2, QTableWidgetItem(str(entry.hours)))
-            self._recent_table.setItem(i, 3, QTableWidgetItem(
-                entry.activity_code.value
-            ))
-            self._recent_table.setItem(i, 4, QTableWidgetItem(
-                entry.description[:50] + "..." if len(entry.description) > 50 else entry.description
-            ))
-            # Status badge
-            self._recent_table.setCellWidget(i, 5, self._create_status_badge(entry.status))
-
     # ==================== PROJECTS TAB ====================
 
     def _create_projects_tab(self) -> QWidget:
@@ -444,7 +325,7 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        # Month selector
+        # Month selector and actions
         month_layout = QHBoxLayout()
         month_layout.addWidget(QLabel("Month:"))
 
@@ -452,6 +333,11 @@ class MainWindow(QMainWindow):
         self._populate_month_selector(self._timesheet_month)
         self._timesheet_month.currentIndexChanged.connect(self._refresh_timesheet)
         month_layout.addWidget(self._timesheet_month)
+
+        # Fetch from Outlook button
+        fetch_btn = self._create_primary_button("📅 Fetch from Outlook")
+        fetch_btn.clicked.connect(self._fetch_outlook_for_month)
+        month_layout.addWidget(fetch_btn)
 
         month_layout.addStretch()
 
@@ -461,6 +347,11 @@ class MainWindow(QMainWindow):
         month_layout.addWidget(self._timesheet_summary)
 
         layout.addLayout(month_layout)
+
+        # Outlook fetch status
+        self._outlook_status = QLabel("")
+        self._outlook_status.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
+        layout.addWidget(self._outlook_status)
 
         # Workday overview section
         workday_group = QGroupBox("Workday Overview")
@@ -490,6 +381,49 @@ class MainWindow(QMainWindow):
         self._workday_row_colors: dict[int, str] = {}  # row -> base background color
 
         layout.addWidget(workday_group)
+
+        # Outlook meetings section (shown after fetching)
+        meetings_group = QGroupBox("Outlook Meetings")
+        meetings_layout = QVBoxLayout(meetings_group)
+
+        self._events_table = QTableWidget()
+        self._events_table.setColumnCount(9)
+        self._events_table.setHorizontalHeaderLabels([
+            "Select", "Date", "Time", "Subject", "Hours", "Activity", "Project", "Description", "Add"
+        ])
+        self._events_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch
+        )
+        self._events_table.horizontalHeader().setSectionResizeMode(
+            7, QHeaderView.ResizeMode.Stretch
+        )
+        self._events_table.setMaximumHeight(200)
+        self._style_table(self._events_table)
+        meetings_layout.addWidget(self._events_table)
+
+        # Buttons for meetings
+        meetings_btn_layout = QHBoxLayout()
+        add_selected_btn = self._create_primary_button("Add Selected")
+        add_selected_btn.clicked.connect(self._add_selected_meetings)
+        meetings_btn_layout.addWidget(add_selected_btn)
+
+        select_all_btn = QPushButton("Select All")
+        select_all_btn.clicked.connect(self._select_all_meetings)
+        meetings_btn_layout.addWidget(select_all_btn)
+
+        deselect_btn = QPushButton("Deselect All")
+        deselect_btn.clicked.connect(self._deselect_all_meetings)
+        meetings_btn_layout.addWidget(deselect_btn)
+
+        meetings_btn_layout.addStretch()
+        meetings_layout.addLayout(meetings_btn_layout)
+
+        self._meetings_group = meetings_group
+        self._meetings_group.setVisible(False)  # Hidden until fetch
+        layout.addWidget(self._meetings_group)
+
+        # Initialize outlook meetings list
+        self._outlook_meetings = []
 
         # Entries section (shown when a day is selected)
         self._entries_group = QGroupBox("Entries for Selected Day")
@@ -839,6 +773,67 @@ class MainWindow(QMainWindow):
         # Hide entries section
         self._entries_group.setVisible(False)
 
+    def _fetch_outlook_for_month(self) -> None:
+        """Fetch meetings from Outlook for the selected month."""
+        try:
+            reader = get_outlook_reader()
+
+            if not reader.is_available():
+                QMessageBox.warning(
+                    self, "Outlook Not Available",
+                    "Could not connect to Outlook. Make sure Outlook desktop "
+                    "(not the web version) is installed and has been opened at least once."
+                )
+                return
+
+            # Get date range from timesheet month selector
+            month_data = self._timesheet_month.currentData()
+            if month_data:
+                start_date, end_date = month_data
+            else:
+                today = date.today()
+                start_date = date(today.year, today.month, 1)
+                if today.month == 12:
+                    end_date = date(today.year + 1, 1, 1) - timedelta(days=1)
+                else:
+                    end_date = date(today.year, today.month + 1, 1) - timedelta(days=1)
+
+            self._outlook_status.setText("Fetching meetings from Outlook...")
+            self._outlook_status.setStyleSheet(f"color: {self.COLORS['primary']};")
+
+            # Fetch meetings
+            meetings = reader.get_meetings_for_date_range(start_date, end_date)
+            self._outlook_meetings = meetings
+
+            # Match meetings to projects
+            for meeting in meetings:
+                event = reader.to_calendar_event(meeting)
+                result = self._matching_service.match_event(event)
+                meeting.matched_project_id = result.project_id
+                meeting.matched_jira_key = result.ticket_jira_key
+                meeting.match_confidence = result.confidence
+
+            # Populate the events table (reuse existing method)
+            self._populate_meetings_table()
+
+            matched_count = len([m for m in meetings if m.match_confidence and m.match_confidence > 0])
+            self._outlook_status.setText(
+                f"Found {len(meetings)} meetings ({matched_count} matched to projects)"
+            )
+            self._outlook_status.setStyleSheet(f"color: {self.COLORS['success']};")
+
+            # Show the meetings section
+            self._meetings_group.setVisible(True)
+
+        except OutlookNotAvailableError as e:
+            QMessageBox.warning(self, "Outlook Error", str(e))
+            self._outlook_status.setText("Failed to connect to Outlook")
+            self._outlook_status.setStyleSheet(f"color: {self.COLORS['danger']};")
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to fetch meetings: {e}")
+            self._outlook_status.setText(f"Error: {e}")
+            self._outlook_status.setStyleSheet(f"color: {self.COLORS['danger']};")
+
     def _add_manual_entry(self) -> None:
         """Add a manual timesheet entry."""
         if self._selected_workday is None:
@@ -968,173 +963,7 @@ class MainWindow(QMainWindow):
             f"Exported {len(entries)} entries to:\n{export_path}"
         )
 
-    # ==================== CALENDAR IMPORT TAB ====================
-
-    def _create_import_tab(self) -> QWidget:
-        """Create the calendar import tab with Outlook COM integration."""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-
-        # Month selector section
-        date_group = QGroupBox("Select Period")
-        date_layout = QHBoxLayout(date_group)
-
-        date_layout.addWidget(QLabel("Month:"))
-        self._import_month = QComboBox()
-        self._populate_month_selector(self._import_month, include_custom=True)
-        self._import_month.currentIndexChanged.connect(self._on_import_month_changed)
-        date_layout.addWidget(self._import_month)
-
-        # Custom date range (initially hidden)
-        self._custom_range_widget = QWidget()
-        custom_layout = QHBoxLayout(self._custom_range_widget)
-        custom_layout.setContentsMargins(0, 0, 0, 0)
-
-        custom_layout.addWidget(QLabel("From:"))
-        self._import_start_date = QDateEdit()
-        self._import_start_date.setCalendarPopup(True)
-        self._import_start_date.setDate(QDate.currentDate().addDays(-7))
-        custom_layout.addWidget(self._import_start_date)
-
-        custom_layout.addWidget(QLabel("To:"))
-        self._import_end_date = QDateEdit()
-        self._import_end_date.setCalendarPopup(True)
-        self._import_end_date.setDate(QDate.currentDate())
-        custom_layout.addWidget(self._import_end_date)
-
-        self._custom_range_widget.setVisible(False)
-        date_layout.addWidget(self._custom_range_widget)
-
-        date_layout.addStretch()
-        layout.addWidget(date_group)
-
-        # Fetch button
-        fetch_btn = self._create_primary_button("Fetch Meetings from Outlook")
-        fetch_btn.clicked.connect(self._fetch_outlook_meetings)
-        layout.addWidget(fetch_btn)
-
-        # Status label
-        self._import_status = QLabel("Select a date range and click 'Fetch Meetings from Outlook'")
-        self._import_status.setStyleSheet("color: gray; font-style: italic;")
-        layout.addWidget(self._import_status)
-
-        # Events table
-        layout.addWidget(QLabel("Fetched Meetings"))
-
-        self._events_table = QTableWidget()
-        self._events_table.setColumnCount(9)
-        self._events_table.setHorizontalHeaderLabels([
-            "Select", "Date", "Time", "Subject", "Hours", "Activity", "Project", "Description", "Add"
-        ])
-        self._events_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch
-        )
-        self._events_table.horizontalHeader().setSectionResizeMode(
-            7, QHeaderView.ResizeMode.Stretch  # Description column
-        )
-        self._events_table.verticalHeader().setVisible(False)
-        layout.addWidget(self._events_table)
-
-        # Bottom buttons
-        btn_layout = QHBoxLayout()
-
-        add_selected_btn = self._create_primary_button("Add Selected Meetings")
-        add_selected_btn.clicked.connect(self._add_selected_meetings)
-        btn_layout.addWidget(add_selected_btn)
-
-        select_all_btn = QPushButton("Select All")
-        select_all_btn.clicked.connect(self._select_all_meetings)
-        btn_layout.addWidget(select_all_btn)
-
-        deselect_all_btn = QPushButton("Deselect All")
-        deselect_all_btn.clicked.connect(self._deselect_all_meetings)
-        btn_layout.addWidget(deselect_all_btn)
-
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
-
-        return widget
-
-    def _on_import_month_changed(self) -> None:
-        """Handle month selector change - show/hide custom date range."""
-        current_text = self._import_month.currentText()
-        is_custom = current_text == "Custom Range..."
-        self._custom_range_widget.setVisible(is_custom)
-
-    def _get_import_date_range(self) -> tuple[date, date]:
-        """Get the date range for calendar import based on selector."""
-        current_text = self._import_month.currentText()
-
-        if current_text == "Custom Range...":
-            return (
-                self._import_start_date.date().toPyDate(),
-                self._import_end_date.date().toPyDate()
-            )
-
-        month_data = self._import_month.currentData()
-        if month_data:
-            return month_data
-
-        # Fallback to current month
-        today = date.today()
-        start = date(today.year, today.month, 1)
-        if today.month == 12:
-            end = date(today.year + 1, 1, 1) - timedelta(days=1)
-        else:
-            end = date(today.year, today.month + 1, 1) - timedelta(days=1)
-        return start, end
-
-    def _fetch_outlook_meetings(self) -> None:
-        """Fetch meetings from Outlook for the selected date range."""
-        try:
-            reader = get_outlook_reader()
-
-            if not reader.is_available():
-                QMessageBox.warning(
-                    self, "Outlook Not Available",
-                    "Could not connect to Outlook. Make sure Outlook desktop "
-                    "(not the web version) is installed and has been opened at least once."
-                )
-                return
-
-            start_date, end_date = self._get_import_date_range()
-
-            if start_date > end_date:
-                QMessageBox.warning(self, "Invalid Range", "Start date must be before end date.")
-                return
-
-            self._import_status.setText("Fetching meetings from Outlook...")
-            self._import_status.setStyleSheet("color: blue;")
-
-            # Fetch meetings
-            meetings = reader.get_meetings_for_date_range(start_date, end_date)
-            self._outlook_meetings = meetings
-
-            # Match meetings to projects
-            for meeting in meetings:
-                event = reader.to_calendar_event(meeting)
-                result = self._matching_service.match_event(event)
-                meeting.matched_project_id = result.project_id
-                meeting.matched_jira_key = result.ticket_jira_key
-                meeting.match_confidence = result.confidence
-
-            # Populate table
-            self._populate_meetings_table()
-
-            self._import_status.setText(
-                f"Found {len(meetings)} meetings. "
-                f"{len([m for m in meetings if m.match_confidence and m.match_confidence > 0])} matched to projects."
-            )
-            self._import_status.setStyleSheet("color: green;")
-
-        except OutlookNotAvailableError as e:
-            QMessageBox.warning(self, "Outlook Error", str(e))
-            self._import_status.setText("Failed to connect to Outlook")
-            self._import_status.setStyleSheet("color: red;")
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to fetch meetings: {e}")
-            self._import_status.setText(f"Error: {e}")
-            self._import_status.setStyleSheet("color: red;")
+    # ==================== OUTLOOK MEETINGS ====================
 
     def _populate_meetings_table(self) -> None:
         """Populate the meetings table with fetched Outlook meetings."""
