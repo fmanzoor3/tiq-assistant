@@ -148,7 +148,7 @@ class OutlookReader:
         meetings = []
 
         try:
-            # Get calendar items
+            # Get calendar items - get a fresh Items collection each time
             items = self._calendar.Items
 
             # IMPORTANT: IncludeRecurrences must be set BEFORE Sort for recurring events
@@ -159,22 +159,51 @@ class OutlookReader:
             start_datetime = datetime.combine(start_date, datetime.min.time())
             end_datetime = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
 
-            # Use MM/DD/YYYY format for Outlook Restrict filter
-            start_str = start_date.strftime("%m/%d/%Y")
-            end_str = (end_date + timedelta(days=1)).strftime("%m/%d/%Y")
+            # Try multiple date formats for Restrict filter
+            # Some Outlook installations prefer different formats
+            date_formats = [
+                # MM/DD/YYYY (US format)
+                (start_date.strftime("%m/%d/%Y"), (end_date + timedelta(days=1)).strftime("%m/%d/%Y")),
+                # YYYY-MM-DD (ISO format)
+                (start_date.strftime("%Y-%m-%d"), (end_date + timedelta(days=1)).strftime("%Y-%m-%d")),
+                # DD/MM/YYYY (European format)
+                (start_date.strftime("%d/%m/%Y"), (end_date + timedelta(days=1)).strftime("%d/%m/%Y")),
+            ]
 
-            restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
-            logger.info(f"Outlook restriction: {restriction}")
+            item = None
+            filtered_items = None
+            used_format = None
 
-            filtered_items = items.Restrict(restriction)
+            for start_str, end_str in date_formats:
+                restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
+                logger.info(f"Trying Outlook restriction: {restriction}")
+
+                try:
+                    # Get fresh items for each attempt
+                    items = self._calendar.Items
+                    items.IncludeRecurrences = True
+                    items.Sort("[Start]")
+
+                    filtered_items = items.Restrict(restriction)
+                    item = filtered_items.GetFirst()
+
+                    if item is not None:
+                        used_format = (start_str, end_str)
+                        logger.info(f"Found items using format: {start_str}")
+                        break
+                except Exception as e:
+                    logger.warning(f"Restrict failed with format {start_str}: {e}")
+                    continue
+
+            if item is None:
+                logger.info(f"No items found for date range {start_date} to {end_date} with any date format")
+                return []
 
             # When IncludeRecurrences=True, Count returns INT_MAX and normal iteration
-            # doesn't work. We need to use Find/FindNext pattern instead.
+            # doesn't work. We need to use GetFirst/GetNext pattern.
             item_count = 0
             skipped_count = 0
 
-            # Use GetFirst/GetNext pattern which works with recurring items
-            item = filtered_items.GetFirst()
             while item is not None:
                 item_count += 1
                 try:
