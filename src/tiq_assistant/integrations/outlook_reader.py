@@ -155,25 +155,55 @@ class OutlookReader:
             items.IncludeRecurrences = True
             items.Sort("[Start]")
 
-            # Format dates for Outlook filter
-            # Add one day to end_date to make it inclusive
-            end_date_plus = end_date + timedelta(days=1)
+            # Create datetime bounds for filtering
+            start_datetime = datetime.combine(start_date, datetime.min.time())
+            end_datetime = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
 
-            # Use MM/DD/YYYY format which Outlook expects (regardless of system locale)
-            start_str = start_date.strftime("%m/%d/%Y")
-            end_str = end_date_plus.strftime("%m/%d/%Y")
+            # Try multiple date formats for Outlook Restrict filter
+            # Different Outlook versions/locales may need different formats
+            restriction_formats = [
+                # Format 1: MM/DD/YYYY (US format)
+                (start_date.strftime("%m/%d/%Y"), (end_date + timedelta(days=1)).strftime("%m/%d/%Y")),
+                # Format 2: YYYY-MM-DD (ISO format)
+                (start_date.strftime("%Y-%m-%d"), (end_date + timedelta(days=1)).strftime("%Y-%m-%d")),
+                # Format 3: DD/MM/YYYY (European format)
+                (start_date.strftime("%d/%m/%Y"), (end_date + timedelta(days=1)).strftime("%d/%m/%Y")),
+            ]
 
-            # Restrict to the date range
-            restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
-            logger.info(f"Outlook restriction: {restriction}")
+            filtered_items = None
+            for start_str, end_str in restriction_formats:
+                try:
+                    restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
+                    logger.info(f"Trying Outlook restriction: {restriction}")
+                    filtered_items = items.Restrict(restriction)
+                    # Try to access first item to verify filter works
+                    count = filtered_items.Count
+                    logger.info(f"Filter returned {count} items")
+                    if count > 0:
+                        break
+                except Exception as e:
+                    logger.warning(f"Filter format failed: {e}")
+                    continue
 
-            filtered_items = items.Restrict(restriction)
+            if filtered_items is None:
+                logger.warning("All filter formats failed, falling back to manual filtering")
+                filtered_items = items
 
             # Count total items for debugging
             item_count = 0
+            skipped_count = 0
             for item in filtered_items:
                 item_count += 1
                 try:
+                    # Manual date filtering as fallback
+                    item_start = datetime(
+                        item.Start.year, item.Start.month, item.Start.day,
+                        item.Start.hour, item.Start.minute, item.Start.second
+                    )
+                    if item_start < start_datetime or item_start >= end_datetime:
+                        skipped_count += 1
+                        continue
+
                     meeting = self._parse_calendar_item(item)
                     if meeting:
                         meetings.append(meeting)
@@ -181,7 +211,7 @@ class OutlookReader:
                     logger.warning(f"Failed to parse calendar item: {e}")
                     continue
 
-            logger.info(f"Found {len(meetings)} meetings from {start_date} to {end_date} (checked {item_count} items)")
+            logger.info(f"Found {len(meetings)} meetings from {start_date} to {end_date} (checked {item_count} items, skipped {skipped_count})")
             return meetings
 
         except Exception as e:
@@ -243,9 +273,18 @@ class OutlookReader:
                 item.End.hour, item.End.minute, item.End.second
             )
 
-            # Skip all-day events or very short meetings
+            # Check if all-day event
+            is_all_day = getattr(item, 'AllDayEvent', False)
+
+            # Skip all-day events (they're usually holidays/PTO, not meetings)
+            if is_all_day:
+                logger.debug(f"Skipping all-day event: {subject}")
+                return None
+
+            # Calculate duration - be more lenient (5 min to 10 hours)
             duration_minutes = (end_dt - start_dt).total_seconds() / 60
-            if duration_minutes < 15 or duration_minutes > 480:  # 15 min to 8 hours
+            if duration_minutes < 5 or duration_minutes > 600:
+                logger.debug(f"Skipping event with duration {duration_minutes} min: {subject}")
                 return None
 
             # Check if it's a Teams meeting
