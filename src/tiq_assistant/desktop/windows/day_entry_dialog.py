@@ -371,12 +371,12 @@ class DayEntryDialog(QDialog):
 
         projects = self._store.get_projects()
         recent = self._store.get_recent_projects(limit=5)
-        recent_ids = {p.id for p in recent}
+        recent_ids = {rp.project_id for rp in recent}
 
         # Add recent projects first
         if recent:
-            for project in recent:
-                self._project_combo.addItem(f"★ {project.name}", project.id)
+            for rp in recent:
+                self._project_combo.addItem(f"★ {rp.project_name}", rp.project_id)
 
         # Add all other projects
         for project in projects:
