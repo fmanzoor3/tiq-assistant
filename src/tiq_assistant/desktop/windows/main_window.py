@@ -1,23 +1,20 @@
 """Main window for TIQ Assistant desktop app with all functionality."""
 
 from datetime import date, timedelta
-from typing import Optional
 from pathlib import Path
-import tempfile
+from typing import Optional
 
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QSpinBox, QComboBox, QFormLayout, QGroupBox,
-    QMessageBox, QFileDialog, QDateEdit, QTextEdit, QCheckBox,
-    QSplitter, QFrame, QScrollArea, QSizePolicy, QAbstractItemView,
-    QApplication
+    QMessageBox, QFileDialog, QCheckBox, QAbstractItemView, QApplication
 )
-from PyQt6.QtCore import Qt, QDate
-from PyQt6.QtGui import QFont, QColor, QBrush
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QBrush
 
 from tiq_assistant.core.models import (
-    Project, TimesheetEntry, ActivityCode, EntryStatus, EntrySource, OutlookMeeting
+    Project, ActivityCode, EntryStatus, OutlookMeeting
 )
 from tiq_assistant.core.holidays import get_holiday_service, HolidayType
 from tiq_assistant.storage.sqlite_store import get_store
@@ -27,6 +24,7 @@ from tiq_assistant.integrations.outlook_reader import get_outlook_reader, Outloo
 from tiq_assistant.exporters.excel_exporter import (
     ExcelExporter, get_monthly_export_path
 )
+from tiq_assistant.desktop.windows.day_entry_dialog import DayEntryDialog, SessionType
 
 
 class MainWindow(QMainWindow):
@@ -386,131 +384,13 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(workday_group)
 
-        # Outlook meetings section (shown after fetching)
-        meetings_group = QGroupBox("Outlook Meetings")
-        meetings_layout = QVBoxLayout(meetings_group)
-
-        self._events_table = QTableWidget()
-        self._events_table.setColumnCount(9)
-        self._events_table.setHorizontalHeaderLabels([
-            "Select", "Date", "Time", "Subject", "Hours", "Activity", "Project", "Description", "Add"
-        ])
-        self._events_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch
-        )
-        self._events_table.horizontalHeader().setSectionResizeMode(
-            7, QHeaderView.ResizeMode.Stretch
-        )
-        # Set minimum row height to prevent text cutoff
-        self._events_table.verticalHeader().setDefaultSectionSize(36)
-        self._events_table.setMaximumHeight(250)
-        self._style_table(self._events_table)
-        meetings_layout.addWidget(self._events_table)
-
-        # Buttons for meetings
-        meetings_btn_layout = QHBoxLayout()
-        add_selected_btn = self._create_primary_button("Add Selected")
-        add_selected_btn.clicked.connect(self._add_selected_meetings)
-        meetings_btn_layout.addWidget(add_selected_btn)
-
-        select_all_btn = QPushButton("Select All")
-        select_all_btn.clicked.connect(self._select_all_meetings)
-        meetings_btn_layout.addWidget(select_all_btn)
-
-        deselect_btn = QPushButton("Deselect All")
-        deselect_btn.clicked.connect(self._deselect_all_meetings)
-        meetings_btn_layout.addWidget(deselect_btn)
-
-        meetings_btn_layout.addStretch()
-        meetings_layout.addLayout(meetings_btn_layout)
-
-        self._meetings_group = meetings_group
-        self._meetings_group.setVisible(False)  # Hidden until fetch
-        layout.addWidget(self._meetings_group)
-
-        # Initialize outlook meetings list
+        # Initialize outlook meetings list (for use in day entry dialog)
         self._outlook_meetings = []
 
-        # Entries section (shown when a day is selected)
-        self._entries_group = QGroupBox("Entries for Selected Day")
-        entries_layout = QVBoxLayout(self._entries_group)
-
-        # Header with label and close button
-        header_layout = QHBoxLayout()
-        self._selected_day_label = QLabel("Click a day above to view/add entries")
-        self._selected_day_label.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
-        header_layout.addWidget(self._selected_day_label)
-        header_layout.addStretch()
-
-        close_btn = QPushButton("✕ Close")
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: none;
-                color: {self.COLORS['text_secondary']};
-                padding: 2px 8px;
-            }}
-            QPushButton:hover {{
-                color: {self.COLORS['danger']};
-            }}
-        """)
-        close_btn.clicked.connect(self._close_entries_section)
-        header_layout.addWidget(close_btn)
-        entries_layout.addLayout(header_layout)
-
-        self._entries_table = QTableWidget()
-        self._entries_table.setColumnCount(6)
-        self._entries_table.setHorizontalHeaderLabels([
-            "Project", "Ticket", "Hours", "Activity", "Description", "Actions"
-        ])
-        self._entries_table.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeMode.Stretch  # Description column
-        )
-        self._entries_table.setMaximumHeight(150)
-        self._style_table(self._entries_table)
-        self._entries_table.setVisible(False)  # Hidden until a day is selected
-        entries_layout.addWidget(self._entries_table)
-
-        # Add entry form (inline, shown when day selected)
-        self._add_entry_widget = QWidget()
-        add_layout = QHBoxLayout(self._add_entry_widget)
-        add_layout.setContentsMargins(0, 5, 0, 0)
-
-        self._entry_date = QDateEdit()
-        self._entry_date.setDate(QDate.currentDate())
-        self._entry_date.setCalendarPopup(True)
-        self._entry_date.setVisible(False)  # Hidden, set programmatically
-
-        self._entry_project = QComboBox()
-        self._entry_project.setMinimumWidth(200)
-        add_layout.addWidget(QLabel("Project:"))
-        add_layout.addWidget(self._entry_project)
-
-        self._entry_hours = QSpinBox()
-        self._entry_hours.setRange(1, 8)
-        self._entry_hours.setValue(1)
-        add_layout.addWidget(QLabel("Hours:"))
-        add_layout.addWidget(self._entry_hours)
-
-        self._entry_activity = QComboBox()
-        for code in ActivityCode:
-            self._entry_activity.addItem(code.value, code)
-        add_layout.addWidget(QLabel("Activity:"))
-        add_layout.addWidget(self._entry_activity)
-
-        self._entry_description = QLineEdit()
-        self._entry_description.setPlaceholderText("Description...")
-        self._entry_description.setMinimumWidth(150)
-        add_layout.addWidget(self._entry_description)
-
-        add_entry_btn = self._create_primary_button("Add")
-        add_entry_btn.clicked.connect(self._add_manual_entry)
-        add_layout.addWidget(add_entry_btn)
-
-        self._add_entry_widget.setVisible(False)  # Hidden until a day is selected
-        entries_layout.addWidget(self._add_entry_widget)
-
-        layout.addWidget(self._entries_group)
+        # Tip for user
+        tip_label = QLabel("Click on a day to add/edit entries. Fetch from Outlook first to import meetings.")
+        tip_label.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic; margin-top: 8px;")
+        layout.addWidget(tip_label)
 
         # Export section
         export_layout = QHBoxLayout()
@@ -522,8 +402,7 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(export_layout)
 
-        # Track currently selected date
-        self._selected_workday: date | None = None
+        layout.addStretch()
 
         return widget
 
@@ -551,16 +430,8 @@ class MainWindow(QMainWindow):
         # Update workday overview
         self._refresh_workday_overview(start, entries)
 
-        # Clear selected day when month changes and hide entries section
-        self._selected_workday = None
+        # Clear selected day when month changes
         self._selected_workday_row = -1
-        self._entries_group.setVisible(False)
-
-        # Refresh project dropdown for add form
-        self._entry_project.clear()
-        self._entry_project.addItem("-- Select Project --", None)
-        for project in self._store.get_projects():
-            self._entry_project.addItem(project.name, project.id)
 
     def _refresh_workday_overview(self, month_start: date, entries: list) -> None:
         """Refresh the workday overview table showing expected vs filled hours."""
@@ -657,12 +528,7 @@ class MainWindow(QMainWindow):
         self._workday_progress.setText(progress_text)
 
     def _on_workday_clicked(self, row: int, col: int) -> None:
-        """Handle workday row click - show entries for that day, or deselect if same row."""
-        # If clicking the same row, deselect it
-        if row == self._selected_workday_row:
-            self._close_entries_section()
-            return
-
+        """Handle workday row click - open day entry dialog."""
         # Get the date from the first column
         date_item = self._workday_table.item(row, 0)
         if not date_item:
@@ -672,107 +538,26 @@ class MainWindow(QMainWindow):
         if not selected_date:
             return
 
-        # Update visual selection indicator
-        self._highlight_selected_workday(row)
+        # Open the day entry dialog
+        self._open_day_entry_dialog(selected_date, SessionType.FULL_DAY)
 
-        self._selected_workday = selected_date
-        self._selected_workday_row = row
-        self._entry_date.setDate(QDate(selected_date.year, selected_date.month, selected_date.day))
-
-        # Show entries section
-        self._entries_group.setVisible(True)
-
-        # Get entries for this date
-        entries = self._store.get_entries(start_date=selected_date, end_date=selected_date)
-
-        # Calculate suggested hours based on remaining
-        holiday_service = get_holiday_service()
-        expected = holiday_service.get_expected_hours(selected_date)
-        filled = sum(e.hours for e in entries)
-        remaining = max(1, expected - filled)
-
-        self._entry_hours.setValue(min(remaining, 8))
-
-        # Update the selected day label
-        day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-        day_name = day_names[selected_date.weekday()]
-        status = "Complete" if filled >= expected else f"{remaining}h remaining"
-        self._selected_day_label.setText(
-            f"{selected_date.strftime('%d.%m.%Y')} ({day_name}) - {filled}h / {expected}h ({status})"
+    def _open_day_entry_dialog(
+        self,
+        target_date: date,
+        session: SessionType = SessionType.FULL_DAY
+    ) -> None:
+        """Open the day entry dialog for the specified date and session."""
+        dialog = DayEntryDialog(
+            target_date=target_date,
+            session=session,
+            outlook_meetings=self._outlook_meetings,
+            parent=self
         )
-        self._selected_day_label.setStyleSheet(f"font-weight: bold; color: {self.COLORS['text']};")
 
-        # Show entries table and add form
-        self._entries_table.setVisible(True)
-        self._add_entry_widget.setVisible(True)
+        dialog.exec()
 
-        # Populate entries table for this day
-        self._entries_table.setRowCount(len(entries))
-        for i, entry in enumerate(entries):
-            self._entries_table.setItem(i, 0, QTableWidgetItem(entry.project_name or "-"))
-            self._entries_table.setItem(i, 1, QTableWidgetItem(entry.ticket_number or "-"))
-            self._entries_table.setItem(i, 2, QTableWidgetItem(str(entry.hours)))
-            self._entries_table.setItem(i, 3, QTableWidgetItem(entry.activity_code.value))
-            self._entries_table.setItem(i, 4, QTableWidgetItem(
-                entry.description[:50] + "..." if len(entry.description) > 50 else entry.description
-            ))
-
-            # Delete button
-            delete_btn = self._create_danger_button("Delete")
-            delete_btn.clicked.connect(lambda checked, eid=entry.id: self._delete_entry(eid))
-            self._entries_table.setCellWidget(i, 5, delete_btn)
-
-    def _highlight_selected_workday(self, selected_row: int) -> None:
-        """Highlight the selected row with visual indicators."""
-        # Selection highlight color (soft blue-gray tint)
-        selection_color = "#E3F2FD"  # Very soft blue
-
-        for row in range(self._workday_table.rowCount()):
-            date_item = self._workday_table.item(row, 0)
-            if not date_item:
-                continue
-
-            work_date = date_item.data(Qt.ItemDataRole.UserRole)
-            if not work_date:
-                continue
-
-            is_selected = (row == selected_row)
-
-            # Update date text with arrow indicator
-            if is_selected:
-                date_item.setText(f"► {work_date.strftime('%d.%m.%Y')}")
-            else:
-                date_item.setText(work_date.strftime("%d.%m.%Y"))
-
-            # Set font weight
-            font = date_item.font()
-            font.setBold(is_selected)
-
-            # Apply to all columns
-            for col in range(self._workday_table.columnCount()):
-                item = self._workday_table.item(row, col)
-                if item:
-                    item.setFont(font)
-
-            # Apply background color - use selection color for selected row,
-            # otherwise use the stored status color
-            if is_selected:
-                self._set_row_background(self._workday_table, row, selection_color)
-            else:
-                base_color = self._workday_row_colors.get(row, "#FFFFFF")
-                self._set_row_background(self._workday_table, row, base_color)
-
-    def _close_entries_section(self) -> None:
-        """Close/hide the entries section and deselect the workday row."""
-        # Clear selection
-        if self._selected_workday_row >= 0:
-            self._highlight_selected_workday(-1)  # Deselect all
-
-        self._selected_workday = None
-        self._selected_workday_row = -1
-
-        # Hide entries section
-        self._entries_group.setVisible(False)
+        # Refresh the timesheet after dialog closes
+        self._refresh_timesheet()
 
     def _fetch_outlook_for_month(self) -> None:
         """Fetch meetings from Outlook for the selected month."""
@@ -825,17 +610,11 @@ class MainWindow(QMainWindow):
                 meeting.matched_jira_key = result.ticket_jira_key
                 meeting.match_confidence = result.confidence
 
-            # Populate the events table (reuse existing method)
-            self._populate_meetings_table()
-
             matched_count = len([m for m in meetings if m.match_confidence and m.match_confidence > 0])
             self._outlook_status.setText(
-                f"Found {len(meetings)} meetings ({matched_count} matched to projects)"
+                f"Found {len(meetings)} meetings ({matched_count} matched). Click a day to add entries."
             )
             self._outlook_status.setStyleSheet(f"color: {self.COLORS['success']};")
-
-            # Show the meetings section
-            self._meetings_group.setVisible(True)
 
         except OutlookNotAvailableError as e:
             QMessageBox.warning(self, "Outlook Error", str(e))
@@ -849,96 +628,6 @@ class MainWindow(QMainWindow):
             # Restore button state
             self._fetch_btn.setEnabled(True)
             self._fetch_btn.setText("📅 Fetch from Outlook")
-
-    def _add_manual_entry(self) -> None:
-        """Add a manual timesheet entry."""
-        if self._selected_workday is None:
-            QMessageBox.warning(self, "Error", "Please select a day first.")
-            return
-
-        project_id = self._entry_project.currentData()
-        description = self._entry_description.text().strip()
-
-        if not description:
-            QMessageBox.warning(self, "Error", "Description is required.")
-            return
-
-        project = self._store.get_project(project_id) if project_id else None
-        settings = self._store.get_settings()
-
-        entry = TimesheetEntry(
-            consultant_id=settings.consultant_id,
-            entry_date=self._selected_workday,
-            hours=self._entry_hours.value(),
-            ticket_number=project.ticket_number if project else None,
-            project_name=project.name if project else None,
-            activity_code=self._entry_activity.currentData(),
-            location=settings.default_location,
-            description=description,
-            status=EntryStatus.DRAFT,
-            source=EntrySource.MANUAL,
-        )
-
-        self._store.save_entry(entry)
-
-        # Update recent project
-        if project:
-            self._store.update_recent_project(project)
-
-        # Clear description and refresh
-        self._entry_description.clear()
-
-        # Refresh the workday overview (to update filled hours)
-        self._refresh_timesheet_keeping_selection()
-
-    def _refresh_timesheet_keeping_selection(self) -> None:
-        """Refresh timesheet but keep the currently selected day."""
-        saved_date = self._selected_workday
-
-        # Get date range from month selector
-        month_data = self._timesheet_month.currentData()
-        if month_data:
-            start, end = month_data
-        else:
-            today = date.today()
-            start = date(today.year, today.month, 1)
-            if today.month == 12:
-                end = date(today.year + 1, 1, 1) - timedelta(days=1)
-            else:
-                end = date(today.year, today.month + 1, 1) - timedelta(days=1)
-
-        entries = self._store.get_entries(start_date=start, end_date=end)
-
-        # Update summary
-        total_hours = sum(e.hours for e in entries)
-        self._timesheet_summary.setText(f"Total: {len(entries)} entries, {total_hours} hours")
-
-        # Update workday overview
-        self._refresh_workday_overview(start, entries)
-
-        # Restore selected day and refresh its entries
-        if saved_date:
-            self._selected_workday = saved_date
-            # Find the row for the saved date
-            for row in range(self._workday_table.rowCount()):
-                item = self._workday_table.item(row, 0)
-                if item and item.data(Qt.ItemDataRole.UserRole) == saved_date:
-                    self._selected_workday_row = row
-                    # Manually trigger click handler to update display
-                    self._on_workday_clicked(row, 0)
-                    break
-
-    def _delete_entry(self, entry_id: str) -> None:
-        """Delete a timesheet entry."""
-        reply = QMessageBox.question(
-            self, "Confirm Delete",
-            "Are you sure you want to delete this entry?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            self._store.delete_entry(entry_id)
-            self._refresh_timesheet_keeping_selection()
 
     def _export_entries(self) -> None:
         """Export entries to Excel."""
@@ -978,209 +667,6 @@ class MainWindow(QMainWindow):
             self, "Export Complete",
             f"Exported {len(entries)} entries to:\n{export_path}"
         )
-
-    # ==================== OUTLOOK MEETINGS ====================
-
-    def _populate_meetings_table(self) -> None:
-        """Populate the meetings table with fetched Outlook meetings."""
-        self._events_table.setRowCount(len(self._outlook_meetings))
-
-        projects = self._store.get_projects()
-        project_map = {p.id: p for p in projects}
-
-        for i, meeting in enumerate(self._outlook_meetings):
-            is_matched = meeting.match_confidence is not None and meeting.match_confidence > 0
-
-            # Checkbox - pre-select matched meetings
-            checkbox = QCheckBox()
-            checkbox.setChecked(is_matched)
-            self._events_table.setCellWidget(i, 0, checkbox)
-
-            # Date
-            date_item = QTableWidgetItem(meeting.start_datetime.strftime("%d.%m.%Y"))
-            self._events_table.setItem(i, 1, date_item)
-
-            # Time
-            time_item = QTableWidgetItem(meeting.display_time)
-            self._events_table.setItem(i, 2, time_item)
-
-            # Subject (truncate if long)
-            subject = meeting.subject
-            if len(subject) > 40:
-                subject = subject[:37] + "..."
-            subject_item = QTableWidgetItem(subject)
-            self._events_table.setItem(i, 3, subject_item)
-
-            # Hours (editable spinner)
-            hours_spin = QSpinBox()
-            hours_spin.setRange(1, 8)
-            hours_spin.setValue(max(1, round(meeting.duration_hours)))
-            self._events_table.setCellWidget(i, 4, hours_spin)
-
-            # Activity code dropdown (default to TPLNT for meetings)
-            activity_combo = QComboBox()
-            for code in ActivityCode:
-                activity_combo.addItem(code.value, code)
-            # Default to TPLNT (Meeting) for calendar events
-            tplnt_idx = [i for i, code in enumerate(ActivityCode) if code == ActivityCode.TPLNT]
-            if tplnt_idx:
-                activity_combo.setCurrentIndex(tplnt_idx[0])
-            self._events_table.setCellWidget(i, 5, activity_combo)
-
-            # Project dropdown (editable)
-            project_combo = QComboBox()
-            project_combo.addItem("-- Select --", None)
-            selected_idx = 0
-            for j, project in enumerate(projects):
-                project_combo.addItem(project.name, project.id)
-                if meeting.matched_project_id and project.id == meeting.matched_project_id:
-                    selected_idx = j + 1
-            project_combo.setCurrentIndex(selected_idx)
-            self._events_table.setCellWidget(i, 6, project_combo)
-
-            # Description (editable)
-            desc_edit = QLineEdit()
-            desc_edit.setText(meeting.subject)
-            self._events_table.setCellWidget(i, 7, desc_edit)
-
-            # Add single button
-            add_btn = self._create_primary_button("Add")
-            add_btn.setStyleSheet(f"""
-                background-color: {self.COLORS['primary']};
-                color: white;
-                border: none;
-                padding: 4px 8px;
-            """)
-            add_btn.clicked.connect(lambda checked, idx=i: self._add_single_meeting(idx))
-            self._events_table.setCellWidget(i, 8, add_btn)
-
-            # Color-code matched meetings with light green background
-            if is_matched:
-                self._set_row_background(self._events_table, i, self.COLORS['success_light'])
-
-    def _add_single_meeting(self, row: int) -> None:
-        """Add a single meeting as a timesheet entry."""
-        if row >= len(self._outlook_meetings):
-            return
-
-        meeting = self._outlook_meetings[row]
-
-        # Get values from widgets
-        hours_spin = self._events_table.cellWidget(row, 4)
-        hours = hours_spin.value() if hours_spin else max(1, round(meeting.duration_hours))
-
-        activity_combo = self._events_table.cellWidget(row, 5)
-        activity_code = activity_combo.currentData() if activity_combo else ActivityCode.TPLNT
-
-        project_combo = self._events_table.cellWidget(row, 6)
-        project_id = project_combo.currentData() if project_combo else None
-
-        desc_edit = self._events_table.cellWidget(row, 7)
-        description = desc_edit.text() if desc_edit else meeting.subject
-
-        settings = self._store.get_settings()
-        project = self._store.get_project(project_id) if project_id else None
-
-        entry = TimesheetEntry(
-            consultant_id=settings.consultant_id,
-            entry_date=meeting.start_datetime.date(),
-            hours=hours,
-            ticket_number=project.ticket_number if project else None,
-            project_name=project.name if project else None,
-            activity_code=activity_code,
-            location=settings.default_location,
-            description=description,
-            status=EntryStatus.DRAFT,
-            source=EntrySource.CALENDAR,
-            source_event_id=meeting.id,
-            source_jira_key=meeting.matched_jira_key,
-        )
-
-        self._store.save_entry(entry)
-
-        # Disable the row
-        checkbox = self._events_table.cellWidget(row, 0)
-        if checkbox:
-            checkbox.setEnabled(False)
-            checkbox.setChecked(False)
-        add_btn = self._events_table.cellWidget(row, 8)
-        if add_btn:
-            add_btn.setEnabled(False)
-
-        # Auto-refresh timesheet
-        self._refresh_timesheet()
-
-        QMessageBox.information(self, "Added", f"Added entry for: {meeting.subject[:40]}")
-
-    def _add_selected_meetings(self) -> None:
-        """Add all selected meetings as timesheet entries."""
-        count = 0
-        settings = self._store.get_settings()
-
-        for i in range(self._events_table.rowCount()):
-            checkbox = self._events_table.cellWidget(i, 0)
-            if checkbox and checkbox.isChecked() and checkbox.isEnabled():
-                if i < len(self._outlook_meetings):
-                    meeting = self._outlook_meetings[i]
-
-                    # Get values from widgets
-                    hours_spin = self._events_table.cellWidget(i, 4)
-                    hours = hours_spin.value() if hours_spin else max(1, round(meeting.duration_hours))
-
-                    activity_combo = self._events_table.cellWidget(i, 5)
-                    activity_code = activity_combo.currentData() if activity_combo else ActivityCode.TPLNT
-
-                    project_combo = self._events_table.cellWidget(i, 6)
-                    project_id = project_combo.currentData() if project_combo else None
-
-                    desc_edit = self._events_table.cellWidget(i, 7)
-                    description = desc_edit.text() if desc_edit else meeting.subject
-
-                    project = self._store.get_project(project_id) if project_id else None
-
-                    entry = TimesheetEntry(
-                        consultant_id=settings.consultant_id,
-                        entry_date=meeting.start_datetime.date(),
-                        hours=hours,
-                        ticket_number=project.ticket_number if project else None,
-                        project_name=project.name if project else None,
-                        activity_code=activity_code,
-                        location=settings.default_location,
-                        description=description,
-                        status=EntryStatus.DRAFT,
-                        source=EntrySource.CALENDAR,
-                        source_event_id=meeting.id,
-                        source_jira_key=meeting.matched_jira_key,
-                    )
-
-                    self._store.save_entry(entry)
-                    checkbox.setEnabled(False)
-                    checkbox.setChecked(False)
-                    add_btn = self._events_table.cellWidget(i, 8)
-                    if add_btn:
-                        add_btn.setEnabled(False)
-                    count += 1
-
-        if count > 0:
-            # Auto-refresh timesheet
-            self._refresh_timesheet()
-            QMessageBox.information(self, "Added", f"Added {count} timesheet entries!")
-        else:
-            QMessageBox.information(self, "No Selection", "No meetings were selected.")
-
-    def _select_all_meetings(self) -> None:
-        """Select all meetings in the table."""
-        for i in range(self._events_table.rowCount()):
-            checkbox = self._events_table.cellWidget(i, 0)
-            if checkbox and checkbox.isEnabled():
-                checkbox.setChecked(True)
-
-    def _deselect_all_meetings(self) -> None:
-        """Deselect all meetings in the table."""
-        for i in range(self._events_table.rowCount()):
-            checkbox = self._events_table.cellWidget(i, 0)
-            if checkbox and checkbox.isEnabled():
-                checkbox.setChecked(False)
 
     # ==================== SETTINGS TAB ====================
 

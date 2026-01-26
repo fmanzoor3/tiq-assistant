@@ -5,8 +5,9 @@ from typing import Optional
 from decimal import Decimal
 import math
 
-from tiq_assistant.core.models import SessionType, ScheduleConfig, OutlookMeeting
+from tiq_assistant.core.models import ScheduleConfig, OutlookMeeting
 from tiq_assistant.storage.sqlite_store import SQLiteStore, get_store
+from tiq_assistant.desktop.windows.day_entry_dialog import SessionType
 
 
 class HourSuggestionService:

@@ -8,10 +8,10 @@ from datetime import date
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import Qt
 
-from tiq_assistant.core.models import SessionType
 from tiq_assistant.storage.sqlite_store import get_store
 from tiq_assistant.desktop.tray import TrayIconManager
 from tiq_assistant.desktop.scheduler import SchedulerManager
+from tiq_assistant.desktop.windows.day_entry_dialog import DayEntryDialog, SessionType
 
 # Configure logging
 logging.basicConfig(
@@ -120,32 +120,71 @@ class TIQDesktopApp:
         """Show the time entry popup for the given session."""
         logger.info(f"Showing {session.value} time entry popup")
 
-        # Import here to avoid circular imports
-        from tiq_assistant.desktop.windows.time_entry_popup import TimeEntryPopup
-
         # Close existing popup if any
         if self._current_popup is not None:
             self._current_popup.close()
 
-        # Create and show new popup
-        self._current_popup = TimeEntryPopup(
-            session=session,
-            target_date=date.today(),
-            scheduler=self._scheduler,
-        )
+        # Fetch today's Outlook meetings for the dialog
+        outlook_meetings = self._get_today_meetings()
 
-        # Connect popup signals
-        self._current_popup.entries_saved.connect(self._on_entries_saved)
-        self._current_popup.export_requested.connect(self._export_today)
+        # Create the dialog
+        self._current_popup = DayEntryDialog(
+            target_date=date.today(),
+            session=session,
+            outlook_meetings=outlook_meetings,
+        )
 
         # Show notification if from schedule
         if from_schedule and self._tray_manager:
             self._tray_manager.show_popup_reminder(session)
 
-        # Show the popup
-        self._current_popup.show()
-        self._current_popup.raise_()
-        self._current_popup.activateWindow()
+        # Show the popup as a modal dialog
+        result = self._current_popup.exec()
+
+        # Handle snooze request (dialog returns 2 for snooze)
+        if self._current_popup.get_snooze_requested():
+            if self._scheduler:
+                if session == SessionType.MORNING:
+                    self._scheduler.snooze_morning()
+                else:
+                    self._scheduler.snooze_afternoon()
+                if self._tray_manager:
+                    self._tray_manager.show_notification(
+                        "Snoozed",
+                        "Reminder snoozed for 15 minutes."
+                    )
+
+        self._current_popup = None
+
+    def _get_today_meetings(self) -> list:
+        """Fetch today's meetings from Outlook."""
+        try:
+            from tiq_assistant.integrations.outlook_reader import (
+                get_outlook_reader, OutlookNotAvailableError
+            )
+            from tiq_assistant.services.matching_service import get_matching_service
+
+            reader = get_outlook_reader()
+
+            if not reader.is_available():
+                return []
+
+            meetings = reader.get_meetings_for_date(date.today())
+
+            # Match meetings to projects
+            matching_service = get_matching_service()
+            for meeting in meetings:
+                event = reader.to_calendar_event(meeting)
+                result = matching_service.match_event(event)
+                meeting.matched_project_id = result.project_id
+                meeting.matched_jira_key = result.ticket_jira_key
+                meeting.match_confidence = result.confidence
+
+            return meetings
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch Outlook meetings: {e}")
+            return []
 
     def _sync_outlook(self) -> None:
         """Sync calendar from Outlook."""

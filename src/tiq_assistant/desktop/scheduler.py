@@ -9,8 +9,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 
-from tiq_assistant.core.models import SessionType, ScheduleConfig
+from tiq_assistant.core.models import ScheduleConfig
 from tiq_assistant.storage.sqlite_store import get_store
+from tiq_assistant.desktop.windows.day_entry_dialog import SessionType
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from tiq_assistant.core.models import SessionType
+from tiq_assistant.desktop.windows.day_entry_dialog import SessionType
 
 
 class TrayIconManager(QObject):
