@@ -87,15 +87,15 @@ class SQLiteStore:
                 CREATE TABLE IF NOT EXISTS schedule_config (
                     id INTEGER PRIMARY KEY CHECK (id = 1),
                     morning_popup_enabled INTEGER DEFAULT 1,
-                    morning_popup_time TEXT DEFAULT '12:30',
+                    morning_popup_time TEXT DEFAULT '12:15',
                     morning_hours_target INTEGER DEFAULT 3,
                     afternoon_popup_enabled INTEGER DEFAULT 1,
-                    afternoon_popup_time TEXT DEFAULT '18:30',
+                    afternoon_popup_time TEXT DEFAULT '18:15',
                     afternoon_hours_target INTEGER DEFAULT 5,
                     workday_start TEXT DEFAULT '09:30',
-                    lunch_start TEXT DEFAULT '12:30',
+                    lunch_start TEXT DEFAULT '12:15',
                     lunch_end TEXT DEFAULT '13:30',
-                    workday_end TEXT DEFAULT '18:30',
+                    workday_end TEXT DEFAULT '18:15',
                     auto_start_with_windows INTEGER DEFAULT 1
                 );
 

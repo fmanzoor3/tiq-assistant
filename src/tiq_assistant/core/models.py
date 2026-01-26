@@ -233,15 +233,15 @@ class OutlookMeeting(BaseModel):
 class ScheduleConfig(BaseModel):
     """User-configurable schedule settings for the desktop app."""
     morning_popup_enabled: bool = True
-    morning_popup_time: str = "12:30"
+    morning_popup_time: str = "12:15"
     morning_hours_target: int = 3
     afternoon_popup_enabled: bool = True
-    afternoon_popup_time: str = "18:30"
+    afternoon_popup_time: str = "18:15"
     afternoon_hours_target: int = 5
     workday_start: str = "09:30"
-    lunch_start: str = "12:30"
+    lunch_start: str = "12:15"
     lunch_end: str = "13:30"
-    workday_end: str = "18:30"
+    workday_end: str = "18:15"
     auto_start_with_windows: bool = True
 
 

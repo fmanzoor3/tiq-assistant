@@ -78,7 +78,7 @@ class TIQDesktopApp:
         # Show startup notification
         self._tray_manager.show_notification(
             "TIQ Assistant Running",
-            "Time tracking is active. Popups will appear at 12:30 and 18:30.",
+            "Time tracking is active. Popups will appear at 12:15 and 18:15.",
         )
 
         # Run the application event loop

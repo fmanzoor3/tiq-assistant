@@ -39,10 +39,11 @@ python -m tiq_assistant
 ```
 
 This starts the app in your system tray (near the clock). Features:
-- Automatic popups at 12:30 (morning) and 18:30 (afternoon) on weekdays
+- Automatic popups at 12:15 (morning) and 18:15 (afternoon) on weekdays
 - Right-click tray icon for manual access
 - Syncs with Outlook calendar for meeting detection (requires Outlook desktop)
 - Calendar Import tab to fetch meetings for any date range
+- Workday overview showing expected hours and progress per day
 
 ### Web App (Streamlit)
 ```cmd
@@ -136,17 +137,25 @@ TIQ Assistant/
 
 ## Key Features
 
-### Morning Popup (12:30)
-- Accounts for 3 hours (9:30 - 12:30)
+### Morning Popup (12:15)
+- Accounts for 3 hours (9:30 - 12:15)
 - Quick project selection
 - Auto-detects morning meetings from Outlook
 - Smart hour suggestions
 
-### Afternoon Popup (18:30)
-- Accounts for 5 hours (13:30 - 18:30)
+### Afternoon Popup (18:15)
+- Accounts for 5 hours (13:30 - 18:15)
 - Full day summary
 - Export to monthly Excel file
 - Review all day's entries
+
+### Workday Overview
+- Shows all workdays in the selected month
+- Displays expected vs filled hours per day
+- Excludes weekends and Turkish national holidays
+- Half-day holidays (like Ramazan/Kurban Bayramı arife) show 4h expected
+- Color-coded: green = complete, yellow = partial, red = past unfilled
+- Click a day to auto-fill the date and suggested hours in the add form
 
 ### Settings (Right-click tray → Settings)
 - Change popup times

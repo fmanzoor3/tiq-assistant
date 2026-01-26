@@ -120,11 +120,11 @@ class TrayIconManager(QObject):
         menu.addSeparator()
 
         # Time entry actions
-        morning_action = QAction("Morning Entry (12:30)", menu)
+        morning_action = QAction("Morning Entry (12:15)", menu)
         morning_action.triggered.connect(self.morning_entry_requested.emit)
         menu.addAction(morning_action)
 
-        afternoon_action = QAction("Afternoon Entry (18:30)", menu)
+        afternoon_action = QAction("Afternoon Entry (18:15)", menu)
         afternoon_action.triggered.connect(self.afternoon_entry_requested.emit)
         menu.addAction(afternoon_action)
 

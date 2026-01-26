@@ -181,7 +181,7 @@ class OutlookReader:
         self,
         target_date: date,
         session: str,
-        morning_end: str = "12:30",
+        morning_end: str = "12:15",
         afternoon_start: str = "13:30"
     ) -> list[OutlookMeeting]:
         """
@@ -190,7 +190,7 @@ class OutlookReader:
         Args:
             target_date: The date to fetch meetings for
             session: Either 'morning' or 'afternoon'
-            morning_end: End time for morning session (default 12:30)
+            morning_end: End time for morning session (default 12:15)
             afternoon_start: Start time for afternoon session (default 13:30)
 
         Returns:

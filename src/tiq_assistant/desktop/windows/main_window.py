@@ -18,6 +18,7 @@ from PyQt6.QtGui import QFont, QColor, QBrush
 from tiq_assistant.core.models import (
     Project, TimesheetEntry, ActivityCode, EntryStatus, EntrySource, OutlookMeeting
 )
+from tiq_assistant.core.holidays import get_holiday_service, HolidayType
 from tiq_assistant.storage.sqlite_store import get_store
 from tiq_assistant.services.matching_service import get_matching_service
 from tiq_assistant.services.timesheet_service import get_timesheet_service
@@ -462,6 +463,30 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(month_layout)
 
+        # Workday overview section
+        workday_group = QGroupBox("Workday Overview")
+        workday_layout = QVBoxLayout(workday_group)
+
+        # Progress summary
+        self._workday_progress = QLabel("")
+        self._workday_progress.setStyleSheet(f"font-size: 13px; color: {self.COLORS['text']};")
+        workday_layout.addWidget(self._workday_progress)
+
+        # Workday table showing each day
+        self._workday_table = QTableWidget()
+        self._workday_table.setColumnCount(5)
+        self._workday_table.setHorizontalHeaderLabels([
+            "Date", "Day", "Expected", "Filled", "Remaining"
+        ])
+        self._workday_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._workday_table.setMaximumHeight(200)
+        self._workday_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._workday_table.itemSelectionChanged.connect(self._on_workday_selected)
+        self._style_table(self._workday_table)
+        workday_layout.addWidget(self._workday_table)
+
+        layout.addWidget(workday_group)
+
         # Entries table
         self._entries_table = QTableWidget()
         self._entries_table.setColumnCount(8)
@@ -519,7 +544,7 @@ class MainWindow(QMainWindow):
         return widget
 
     def _refresh_timesheet(self) -> None:
-        """Refresh the timesheet entries table."""
+        """Refresh the timesheet entries table and workday overview."""
         # Get date range from month selector
         month_data = self._timesheet_month.currentData()
         if month_data:
@@ -538,6 +563,9 @@ class MainWindow(QMainWindow):
         # Update summary
         total_hours = sum(e.hours for e in entries)
         self._timesheet_summary.setText(f"Total: {len(entries)} entries, {total_hours} hours")
+
+        # Update workday overview
+        self._refresh_workday_overview(start, entries)
 
         self._entries_table.setRowCount(len(entries))
         for i, entry in enumerate(entries):
@@ -564,6 +592,114 @@ class MainWindow(QMainWindow):
         self._entry_project.addItem("-- Select Project --", None)
         for project in self._store.get_projects():
             self._entry_project.addItem(project.name, project.id)
+
+    def _refresh_workday_overview(self, month_start: date, entries: list) -> None:
+        """Refresh the workday overview table showing expected vs filled hours."""
+        holiday_service = get_holiday_service()
+
+        # Get workdays for the month
+        workdays = holiday_service.get_workdays_in_month(month_start.year, month_start.month)
+
+        # Calculate filled hours per day
+        hours_by_date: dict[date, int] = {}
+        for entry in entries:
+            if entry.entry_date not in hours_by_date:
+                hours_by_date[entry.entry_date] = 0
+            hours_by_date[entry.entry_date] += entry.hours
+
+        # Day names in Turkish
+        day_names = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+
+        # Stats for progress summary
+        total_expected = 0
+        total_filled = 0
+        days_complete = 0
+        days_incomplete = 0
+
+        self._workday_table.setRowCount(len(workdays))
+
+        for i, (work_date, expected_hours) in enumerate(workdays):
+            filled_hours = hours_by_date.get(work_date, 0)
+            remaining = max(0, expected_hours - filled_hours)
+
+            total_expected += expected_hours
+            total_filled += filled_hours
+
+            if filled_hours >= expected_hours:
+                days_complete += 1
+            else:
+                days_incomplete += 1
+
+            # Date
+            date_item = QTableWidgetItem(work_date.strftime("%d.%m.%Y"))
+            date_item.setData(Qt.ItemDataRole.UserRole, work_date)
+            self._workday_table.setItem(i, 0, date_item)
+
+            # Day name
+            day_name = day_names[work_date.weekday()]
+            day_item = QTableWidgetItem(day_name)
+            self._workday_table.setItem(i, 1, day_item)
+
+            # Check if it's a holiday (half-day)
+            holiday = holiday_service.get_holiday(work_date)
+            if holiday and holiday.holiday_type == HolidayType.HALF_DAY:
+                day_item.setText(f"{day_name} (Yarım gün)")
+                day_item.setForeground(QBrush(QColor(self.COLORS['warning'])))
+
+            # Expected hours
+            expected_item = QTableWidgetItem(f"{expected_hours}h")
+            self._workday_table.setItem(i, 2, expected_item)
+
+            # Filled hours
+            filled_item = QTableWidgetItem(f"{filled_hours}h")
+            self._workday_table.setItem(i, 3, filled_item)
+
+            # Remaining hours
+            remaining_item = QTableWidgetItem(f"{remaining}h" if remaining > 0 else "✓")
+            self._workday_table.setItem(i, 4, remaining_item)
+
+            # Color-code the row based on status
+            if filled_hours >= expected_hours:
+                # Complete - green
+                self._set_row_background(self._workday_table, i, self.COLORS['success_light'])
+                remaining_item.setForeground(QBrush(QColor(self.COLORS['success'])))
+            elif filled_hours > 0:
+                # Partial - yellow
+                self._set_row_background(self._workday_table, i, self.COLORS['warning_light'])
+            elif work_date < date.today():
+                # Past unfilled - light red
+                self._set_row_background(self._workday_table, i, self.COLORS['danger_light'])
+
+        # Update progress summary
+        remaining_total = max(0, total_expected - total_filled)
+        progress_text = (
+            f"Progress: {total_filled}h / {total_expected}h expected  |  "
+            f"{days_complete} days complete, {days_incomplete} remaining  |  "
+            f"{remaining_total}h left to fill"
+        )
+        self._workday_progress.setText(progress_text)
+
+    def _on_workday_selected(self) -> None:
+        """Handle workday row selection - pre-fill the date in add entry form."""
+        selected_rows = self._workday_table.selectedItems()
+        if selected_rows:
+            # Get the date from the first column
+            date_item = self._workday_table.item(selected_rows[0].row(), 0)
+            if date_item:
+                selected_date = date_item.data(Qt.ItemDataRole.UserRole)
+                if selected_date:
+                    self._entry_date.setDate(QDate(selected_date.year, selected_date.month, selected_date.day))
+
+                    # Also calculate suggested hours based on remaining
+                    holiday_service = get_holiday_service()
+                    expected = holiday_service.get_expected_hours(selected_date)
+
+                    # Get current filled hours for this date
+                    entries = self._store.get_entries(start_date=selected_date, end_date=selected_date)
+                    filled = sum(e.hours for e in entries)
+                    remaining = max(1, expected - filled)
+
+                    self._entry_hours.setValue(min(remaining, 8))
 
     def _add_manual_entry(self) -> None:
         """Add a manual timesheet entry."""
