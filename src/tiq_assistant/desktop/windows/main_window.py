@@ -481,9 +481,26 @@ class MainWindow(QMainWindow):
         self._workday_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self._workday_table.setMaximumHeight(200)
         self._workday_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._workday_table.itemSelectionChanged.connect(self._on_workday_selected)
+        self._workday_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._workday_table.cellClicked.connect(self._on_workday_clicked)
         self._style_table(self._workday_table)
+        # Custom style for workday table to show selection with border instead of color change
+        self._workday_table.setStyleSheet(f"""
+            QTableWidget {{
+                border: 1px solid {self.COLORS['gray']};
+                gridline-color: {self.COLORS['gray']};
+                background-color: white;
+                color: {self.COLORS['text']};
+                outline: none;
+            }}
+            QTableWidget::item:selected {{
+                border: 2px solid {self.COLORS['primary']};
+            }}
+        """)
         workday_layout.addWidget(self._workday_table)
+
+        # Track selected row index
+        self._selected_workday_row: int = -1
 
         layout.addWidget(workday_group)
 
@@ -590,10 +607,12 @@ class MainWindow(QMainWindow):
 
         # Clear selected day when month changes
         self._selected_workday = None
+        self._selected_workday_row = -1
         self._entries_table.setRowCount(0)
         self._entries_table.setVisible(False)
         self._add_entry_widget.setVisible(False)
         self._selected_day_label.setText("Click a day above to view/add entries")
+        self._selected_day_label.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
         self._selected_day_label.setVisible(True)
 
         # Refresh project dropdown for add form
@@ -694,14 +713,10 @@ class MainWindow(QMainWindow):
         )
         self._workday_progress.setText(progress_text)
 
-    def _on_workday_selected(self) -> None:
-        """Handle workday row selection - show entries for that day."""
-        selected_rows = self._workday_table.selectedItems()
-        if not selected_rows:
-            return
-
+    def _on_workday_clicked(self, row: int, col: int) -> None:
+        """Handle workday row click - show entries for that day."""
         # Get the date from the first column
-        date_item = self._workday_table.item(selected_rows[0].row(), 0)
+        date_item = self._workday_table.item(row, 0)
         if not date_item:
             return
 
@@ -709,7 +724,11 @@ class MainWindow(QMainWindow):
         if not selected_date:
             return
 
+        # Update visual selection indicator
+        self._highlight_selected_workday(row)
+
         self._selected_workday = selected_date
+        self._selected_workday_row = row
         self._entry_date.setDate(QDate(selected_date.year, selected_date.month, selected_date.day))
 
         # Get entries for this date
@@ -753,6 +772,33 @@ class MainWindow(QMainWindow):
             delete_btn = self._create_danger_button("Delete")
             delete_btn.clicked.connect(lambda checked, eid=entry.id: self._delete_entry(eid))
             self._entries_table.setCellWidget(i, 6, delete_btn)
+
+    def _highlight_selected_workday(self, selected_row: int) -> None:
+        """Highlight the selected row with a visual indicator (arrow/marker in date column)."""
+        for row in range(self._workday_table.rowCount()):
+            date_item = self._workday_table.item(row, 0)
+            if date_item:
+                work_date = date_item.data(Qt.ItemDataRole.UserRole)
+                if work_date:
+                    # Add arrow indicator to selected row
+                    if row == selected_row:
+                        date_item.setText(f"► {work_date.strftime('%d.%m.%Y')}")
+                        # Make the row text bold
+                        font = date_item.font()
+                        font.setBold(True)
+                        for col in range(self._workday_table.columnCount()):
+                            item = self._workday_table.item(row, col)
+                            if item:
+                                item.setFont(font)
+                    else:
+                        date_item.setText(work_date.strftime("%d.%m.%Y"))
+                        # Remove bold from non-selected rows
+                        font = date_item.font()
+                        font.setBold(False)
+                        for col in range(self._workday_table.columnCount()):
+                            item = self._workday_table.item(row, col)
+                            if item:
+                                item.setFont(font)
 
     def _add_manual_entry(self) -> None:
         """Add a manual timesheet entry."""
@@ -823,14 +869,14 @@ class MainWindow(QMainWindow):
         # Restore selected day and refresh its entries
         if saved_date:
             self._selected_workday = saved_date
-            # Find and select the row in workday table
+            # Find the row for the saved date
             for row in range(self._workday_table.rowCount()):
                 item = self._workday_table.item(row, 0)
                 if item and item.data(Qt.ItemDataRole.UserRole) == saved_date:
-                    self._workday_table.selectRow(row)
+                    self._selected_workday_row = row
+                    # Manually trigger click handler to update display
+                    self._on_workday_clicked(row, 0)
                     break
-            # Manually trigger selection update
-            self._on_workday_selected()
 
     def _delete_entry(self, entry_id: str) -> None:
         """Delete a timesheet entry."""
