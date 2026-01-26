@@ -131,14 +131,17 @@ class DayEntryDialog(QDialog):
                 color: {self.COLORS['text']};
             }}
             QWidget {{
+                background-color: white;
                 color: {self.COLORS['text']};
             }}
             QLabel {{
+                background-color: transparent;
                 color: {self.COLORS['text']};
             }}
             QGroupBox {{
                 font-weight: bold;
                 color: {self.COLORS['text']};
+                background-color: white;
                 border: 1px solid {self.COLORS['gray']};
                 border-radius: 4px;
                 margin-top: 12px;
@@ -149,6 +152,11 @@ class DayEntryDialog(QDialog):
                 left: 10px;
                 padding: 0 5px;
                 color: {self.COLORS['text']};
+            }}
+            QGroupBox QLabel {{
+                background-color: transparent;
+                color: {self.COLORS['text']};
+                font-weight: normal;
             }}
             QTableWidget {{
                 border: 1px solid {self.COLORS['gray']};
@@ -172,21 +180,43 @@ class DayEntryDialog(QDialog):
             QComboBox {{
                 color: {self.COLORS['text']};
                 background-color: white;
+                padding: 4px 8px;
+                border: 1px solid {self.COLORS['gray']};
+                border-radius: 4px;
             }}
             QComboBox QAbstractItemView {{
                 color: {self.COLORS['text']};
                 background-color: white;
+                selection-background-color: {self.COLORS['primary']};
+                selection-color: white;
             }}
             QLineEdit {{
                 color: {self.COLORS['text']};
                 background-color: white;
+                padding: 4px 8px;
+                border: 1px solid {self.COLORS['gray']};
+                border-radius: 4px;
             }}
             QSpinBox {{
                 color: {self.COLORS['text']};
                 background-color: white;
+                padding: 4px 8px;
+                border: 1px solid {self.COLORS['gray']};
+                border-radius: 4px;
             }}
             QCheckBox {{
                 color: {self.COLORS['text']};
+                background-color: transparent;
+            }}
+            QPushButton {{
+                color: {self.COLORS['text']};
+                background-color: white;
+                padding: 6px 12px;
+                border: 1px solid {self.COLORS['gray']};
+                border-radius: 4px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.COLORS['gray_light']};
             }}
         """)
 
