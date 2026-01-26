@@ -96,15 +96,17 @@ class OutlookReader:
         meetings = []
 
         try:
-            # Format dates for Outlook filter
-            start_str = target_date.strftime("%m/%d/%Y 12:00 AM")
-            end_date = target_date + timedelta(days=1)
-            end_str = end_date.strftime("%m/%d/%Y 12:00 AM")
-
             # Get calendar items
             items = self._calendar.Items
-            items.Sort("[Start]")
+
+            # IMPORTANT: IncludeRecurrences must be set BEFORE Sort for recurring events
             items.IncludeRecurrences = True
+            items.Sort("[Start]")
+
+            # Format dates for Outlook filter (use MM/DD/YYYY format)
+            end_date = target_date + timedelta(days=1)
+            start_str = target_date.strftime("%m/%d/%Y")
+            end_str = end_date.strftime("%m/%d/%Y")
 
             # Restrict to the specific date
             restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
@@ -146,22 +148,31 @@ class OutlookReader:
         meetings = []
 
         try:
-            # Format dates for Outlook filter
-            start_str = start_date.strftime("%m/%d/%Y 12:00 AM")
-            # Add one day to end_date to make it inclusive
-            end_date_plus = end_date + timedelta(days=1)
-            end_str = end_date_plus.strftime("%m/%d/%Y 12:00 AM")
-
             # Get calendar items
             items = self._calendar.Items
-            items.Sort("[Start]")
+
+            # IMPORTANT: IncludeRecurrences must be set BEFORE Sort for recurring events
             items.IncludeRecurrences = True
+            items.Sort("[Start]")
+
+            # Format dates for Outlook filter
+            # Add one day to end_date to make it inclusive
+            end_date_plus = end_date + timedelta(days=1)
+
+            # Use MM/DD/YYYY format which Outlook expects (regardless of system locale)
+            start_str = start_date.strftime("%m/%d/%Y")
+            end_str = end_date_plus.strftime("%m/%d/%Y")
 
             # Restrict to the date range
             restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
+            logger.info(f"Outlook restriction: {restriction}")
+
             filtered_items = items.Restrict(restriction)
 
+            # Count total items for debugging
+            item_count = 0
             for item in filtered_items:
+                item_count += 1
                 try:
                     meeting = self._parse_calendar_item(item)
                     if meeting:
@@ -170,11 +181,11 @@ class OutlookReader:
                     logger.warning(f"Failed to parse calendar item: {e}")
                     continue
 
-            logger.info(f"Found {len(meetings)} meetings from {start_date} to {end_date}")
+            logger.info(f"Found {len(meetings)} meetings from {start_date} to {end_date} (checked {item_count} items)")
             return meetings
 
         except Exception as e:
-            logger.error(f"Error fetching meetings: {e}")
+            logger.error(f"Error fetching meetings: {e}", exc_info=True)
             return []
 
     def get_meetings_for_session(
