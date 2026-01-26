@@ -4,7 +4,8 @@ This module manages national holidays (Ulusal Bayram ve Genel Tatil Günleri)
 that should be excluded from workday calculations. It also handles half-day
 holidays where only 4 hours of work are expected instead of 8.
 
-Based on the 2026 Enerjisa holiday calendar.
+Based on the 2026 Enerjisa holiday calendar, with support for user-uploaded
+holiday calendars stored in the database.
 """
 
 from dataclasses import dataclass
@@ -78,19 +79,71 @@ HOLIDAYS_2026 = [
 ]
 
 
+def _load_holidays_from_database() -> list[Holiday]:
+    """Load custom holidays from the database."""
+    from tiq_assistant.storage.sqlite_store import get_store
+
+    store = get_store()
+    db_holidays = store.get_holidays()
+
+    holidays = []
+    for h in db_holidays:
+        holiday_type = HolidayType.HALF_DAY if h['holiday_type'] == 'half_day' else HolidayType.FULL_DAY
+        holidays.append(Holiday(
+            date=h['holiday_date'],
+            name=h['name'],
+            holiday_type=holiday_type
+        ))
+
+    return holidays
+
+
 class HolidayService:
     """Service for managing national holidays."""
 
-    def __init__(self, holidays: Optional[list[Holiday]] = None):
+    def __init__(self, holidays: Optional[list[Holiday]] = None, use_database: bool = True):
         """
         Initialize the holiday service.
 
         Args:
             holidays: List of holidays. If None, uses default 2026 holidays.
+            use_database: If True, also loads custom holidays from the database.
         """
-        self._holidays = holidays or HOLIDAYS_2026
+        if holidays is not None:
+            self._holidays = holidays
+        else:
+            # Start with default holidays
+            self._holidays = list(HOLIDAYS_2026)
+
+            # Load and merge database holidays if enabled
+            if use_database:
+                try:
+                    db_holidays = _load_holidays_from_database()
+                    # Database holidays override defaults for the same date
+                    db_dates = {h.date for h in db_holidays}
+                    # Keep defaults that aren't overridden
+                    self._holidays = [h for h in self._holidays if h.date not in db_dates]
+                    # Add all database holidays
+                    self._holidays.extend(db_holidays)
+                except Exception:
+                    # If database loading fails, continue with defaults
+                    pass
+
         # Build lookup dict for fast access
         self._holiday_map: dict[date, Holiday] = {h.date: h for h in self._holidays}
+
+    def reload_from_database(self) -> None:
+        """Reload holidays from database (call after uploading new holidays)."""
+        # Rebuild with fresh database data
+        self._holidays = list(HOLIDAYS_2026)
+        try:
+            db_holidays = _load_holidays_from_database()
+            db_dates = {h.date for h in db_holidays}
+            self._holidays = [h for h in self._holidays if h.date not in db_dates]
+            self._holidays.extend(db_holidays)
+        except Exception:
+            pass
+        self._holiday_map = {h.date: h for h in self._holidays}
 
     def is_holiday(self, check_date: date) -> bool:
         """Check if a date is a national holiday (full or half day)."""

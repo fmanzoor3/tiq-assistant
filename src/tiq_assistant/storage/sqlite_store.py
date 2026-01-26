@@ -130,12 +130,23 @@ class SQLiteStore:
                     FOREIGN KEY (imported_entry_id) REFERENCES timesheet_entries(id)
                 );
 
+                -- Custom holidays (from uploaded PDF/JPG)
+                CREATE TABLE IF NOT EXISTS holidays (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    holiday_date TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL,
+                    holiday_type TEXT DEFAULT 'full_day',
+                    source_file TEXT,
+                    created_at TEXT NOT NULL
+                );
+
                 -- Indexes
                 CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
                 CREATE INDEX IF NOT EXISTS idx_entries_status ON timesheet_entries(status);
                 CREATE INDEX IF NOT EXISTS idx_projects_jira_key ON projects(jira_key);
                 CREATE INDEX IF NOT EXISTS idx_recent_projects_last_used ON recent_projects(last_used_at);
                 CREATE INDEX IF NOT EXISTS idx_meetings_start ON outlook_meetings(start_datetime);
+                CREATE INDEX IF NOT EXISTS idx_holidays_date ON holidays(holiday_date);
             """)
             conn.commit()
 
@@ -558,6 +569,98 @@ class SQLiteStore:
                 WHERE start_datetime < ?
             """, (cutoff.isoformat(),))
             conn.commit()
+
+    # ==================== Holidays ====================
+
+    def save_holiday(self, holiday_date: date, name: str, holiday_type: str = "full_day",
+                     source_file: str = None) -> None:
+        """Save a holiday to the database."""
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO holidays
+                (holiday_date, name, holiday_type, source_file, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                holiday_date.isoformat(),
+                name,
+                holiday_type,
+                source_file,
+                datetime.now().isoformat(),
+            ))
+            conn.commit()
+
+    def save_holidays_batch(self, holidays: list[tuple[date, str, str]], source_file: str = None) -> int:
+        """Save multiple holidays at once. Returns count of saved holidays."""
+        now = datetime.now().isoformat()
+        count = 0
+        with self._get_connection() as conn:
+            for holiday_date, name, holiday_type in holidays:
+                try:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO holidays
+                        (holiday_date, name, holiday_type, source_file, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (holiday_date.isoformat(), name, holiday_type, source_file, now))
+                    count += 1
+                except Exception:
+                    pass  # Skip duplicates or errors
+            conn.commit()
+        return count
+
+    def get_holidays(self, year: int = None) -> list[dict]:
+        """Get all holidays, optionally filtered by year."""
+        with self._get_connection() as conn:
+            if year:
+                rows = conn.execute("""
+                    SELECT id, holiday_date, name, holiday_type, source_file
+                    FROM holidays
+                    WHERE holiday_date LIKE ?
+                    ORDER BY holiday_date
+                """, (f"{year}-%",)).fetchall()
+            else:
+                rows = conn.execute("""
+                    SELECT id, holiday_date, name, holiday_type, source_file
+                    FROM holidays
+                    ORDER BY holiday_date
+                """).fetchall()
+
+            return [
+                {
+                    "id": row["id"],
+                    "holiday_date": date.fromisoformat(row["holiday_date"]),
+                    "name": row["name"],
+                    "holiday_type": row["holiday_type"],
+                    "source_file": row["source_file"],
+                }
+                for row in rows
+            ]
+
+    def delete_holidays_by_source(self, source_file: str) -> int:
+        """Delete all holidays from a specific source file. Returns count deleted."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM holidays WHERE source_file = ?",
+                (source_file,)
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def delete_holiday(self, holiday_id: int) -> bool:
+        """Delete a single holiday by ID. Returns True if deleted."""
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM holidays WHERE id = ?",
+                (holiday_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def clear_all_holidays(self) -> int:
+        """Clear all custom holidays. Returns count deleted."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM holidays")
+            conn.commit()
+            return cursor.rowcount
 
 
 # Global store instance
