@@ -12,6 +12,7 @@ from tiq_assistant.storage.sqlite_store import get_store
 from tiq_assistant.desktop.tray import TrayIconManager
 from tiq_assistant.desktop.scheduler import SchedulerManager
 from tiq_assistant.desktop.windows.day_entry_dialog import DayEntryDialog, SessionType
+from tiq_assistant.desktop.icon import create_app_icon
 
 # Configure logging
 logging.basicConfig(
@@ -42,10 +43,21 @@ class TIQDesktopApp:
         Returns:
             Exit code (0 for success)
         """
+        # Set Windows App User Model ID for proper taskbar grouping/icon
+        # This must be done BEFORE creating QApplication
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('TIQAssistant.Desktop.1.0')
+        except Exception:
+            pass  # Not on Windows or API not available
+
         # Create Qt application
         self._app = QApplication(sys.argv)
         self._app.setQuitOnLastWindowClosed(False)  # Keep running in tray
         self._app.setApplicationName("TIQ Assistant")
+
+        # Set application-wide icon for taskbar
+        self._app.setWindowIcon(create_app_icon())
 
         # Initialize storage (creates tables if needed)
         store = get_store()
