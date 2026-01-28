@@ -632,6 +632,8 @@ class MainWindow(QMainWindow):
 
     def _export_entries(self) -> None:
         """Export entries to Excel."""
+        from datetime import datetime
+
         # Get date range from month selector
         month_data = self._timesheet_month.currentData()
         if month_data:
@@ -650,14 +652,15 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Entries", "No entries to export.")
             return
 
-        # Get export path
-        export_path = get_monthly_export_path()
+        # Get export path with month, year, and entry count
+        target_datetime = datetime(start.year, start.month, 1)
+        export_path = get_monthly_export_path(
+            target_date=target_datetime,
+            entry_count=len(entries)
+        )
 
         exporter = ExcelExporter()
-        if export_path.exists():
-            exporter.append_to_existing(entries, export_path)
-        else:
-            exporter.export_to_new_file(entries, export_path)
+        exporter.export_to_new_file(entries, export_path)
 
         # Mark as exported
         self._store.mark_entries_exported([e.id for e in entries])

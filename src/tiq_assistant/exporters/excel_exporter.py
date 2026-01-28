@@ -222,7 +222,10 @@ def export_entries(
         return exporter.export_to_new_file(entries, output_path)
 
 
-def get_monthly_export_path(target_date: Optional[datetime] = None) -> Path:
+def get_monthly_export_path(
+    target_date: Optional[datetime] = None,
+    entry_count: Optional[int] = None
+) -> Path:
     """
     Get the path for the monthly timesheet file.
 
@@ -230,9 +233,10 @@ def get_monthly_export_path(target_date: Optional[datetime] = None) -> Path:
 
     Args:
         target_date: Date to use for the filename (default: today)
+        entry_count: Number of entries to include in filename (optional)
 
     Returns:
-        Path to the monthly timesheet file (e.g., Timesheet_2026-01.xlsx)
+        Path to the monthly timesheet file (e.g., Timesheet_January_2026_45entries.xlsx)
     """
     import os
 
@@ -243,9 +247,16 @@ def get_monthly_export_path(target_date: Optional[datetime] = None) -> Path:
     export_dir = Path(os.path.expanduser("~/Documents/TIQ Timesheets"))
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate filename
-    month_str = target_date.strftime("%Y-%m")
-    return export_dir / f"Timesheet_{month_str}.xlsx"
+    # Generate filename with month name, year, and entry count
+    month_name = target_date.strftime("%B")  # Full month name (e.g., "January")
+    year = target_date.strftime("%Y")
+
+    if entry_count is not None:
+        filename = f"Timesheet_{month_name}_{year}_{entry_count}entries.xlsx"
+    else:
+        filename = f"Timesheet_{month_name}_{year}.xlsx"
+
+    return export_dir / filename
 
 
 def export_to_monthly_file(entries: list[TimesheetEntry]) -> Path:
