@@ -652,12 +652,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "No Entries", "No entries to export.")
             return
 
-        # Get export path with month, year, and entry count
+        # Get export path with auto-incrementing version
         target_datetime = datetime(start.year, start.month, 1)
-        export_path = get_monthly_export_path(
-            target_date=target_datetime,
-            entry_count=len(entries)
-        )
+        export_path = get_monthly_export_path(target_date=target_datetime)
 
         exporter = ExcelExporter()
         exporter.export_to_new_file(entries, export_path)

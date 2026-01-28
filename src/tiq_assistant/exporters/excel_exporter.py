@@ -222,23 +222,21 @@ def export_entries(
         return exporter.export_to_new_file(entries, output_path)
 
 
-def get_monthly_export_path(
-    target_date: Optional[datetime] = None,
-    entry_count: Optional[int] = None
-) -> Path:
+def get_monthly_export_path(target_date: Optional[datetime] = None) -> Path:
     """
-    Get the path for the monthly timesheet file.
+    Get the path for the monthly timesheet file with auto-incrementing version.
 
     Creates the TIQ Timesheets directory in Documents if it doesn't exist.
+    Automatically finds the next available version number for the month.
 
     Args:
         target_date: Date to use for the filename (default: today)
-        entry_count: Number of entries to include in filename (optional)
 
     Returns:
-        Path to the monthly timesheet file (e.g., Timesheet_January_2026_45entries.xlsx)
+        Path to the monthly timesheet file (e.g., Timesheet_January_2026_v1.xlsx)
     """
     import os
+    import re
 
     if target_date is None:
         target_date = datetime.now()
@@ -247,15 +245,24 @@ def get_monthly_export_path(
     export_dir = Path(os.path.expanduser("~/Documents/TIQ Timesheets"))
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate filename with month name, year, and entry count
+    # Generate base filename with month name and year
     month_name = target_date.strftime("%B")  # Full month name (e.g., "January")
     year = target_date.strftime("%Y")
+    base_pattern = f"Timesheet_{month_name}_{year}"
 
-    if entry_count is not None:
-        filename = f"Timesheet_{month_name}_{year}_{entry_count}entries.xlsx"
-    else:
-        filename = f"Timesheet_{month_name}_{year}.xlsx"
+    # Find existing versions for this month
+    existing_versions = []
+    version_regex = re.compile(rf"{re.escape(base_pattern)}_v(\d+)\.xlsx$", re.IGNORECASE)
 
+    for file in export_dir.glob(f"{base_pattern}_v*.xlsx"):
+        match = version_regex.match(file.name)
+        if match:
+            existing_versions.append(int(match.group(1)))
+
+    # Determine next version number
+    next_version = max(existing_versions, default=0) + 1
+
+    filename = f"{base_pattern}_v{next_version}.xlsx"
     return export_dir / filename
 
 
