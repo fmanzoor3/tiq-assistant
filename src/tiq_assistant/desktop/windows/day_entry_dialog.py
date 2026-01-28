@@ -123,8 +123,16 @@ class DayEntryDialog(QDialog):
         date_str = self._target_date.strftime("%d %B %Y")
         self.setWindowTitle(f"Time Entry: {day_name}, {date_str}{session_label}")
         self.setWindowIcon(create_app_icon())
-        self.setMinimumSize(700, 500)
+        self.setMinimumSize(800, 600)
+        self.resize(900, 700)  # Default size, can be resized larger
         self.setModal(True)
+
+        # Allow maximize button
+        self.setWindowFlags(
+            self.windowFlags() |
+            Qt.WindowType.WindowMaximizeButtonHint |
+            Qt.WindowType.WindowMinimizeButtonHint
+        )
 
         # Apply stylesheet
         self.setStyleSheet(f"""
@@ -295,10 +303,11 @@ class DayEntryDialog(QDialog):
         )
         self._entries_table.verticalHeader().setVisible(False)
         self._entries_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._entries_table.setMaximumHeight(180)
+        self._entries_table.setMinimumHeight(120)
         group_layout.addWidget(self._entries_table)
 
-        layout.addWidget(group)
+        # Add with stretch factor so it can expand
+        layout.addWidget(group, 1)
 
     def _create_meetings_section(self, layout: QVBoxLayout) -> None:
         """Create the Outlook meetings section."""
@@ -309,6 +318,8 @@ class DayEntryDialog(QDialog):
             no_meetings_label = QLabel("No meetings for this day/session")
             no_meetings_label.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
             group_layout.addWidget(no_meetings_label)
+            # Add without stretch when no meetings (stays compact)
+            layout.addWidget(self._meetings_group)
         else:
             self._meetings_table = QTableWidget()
             self._meetings_table.setColumnCount(7)
@@ -321,7 +332,7 @@ class DayEntryDialog(QDialog):
             self._meetings_table.verticalHeader().setVisible(False)
             self._meetings_table.verticalHeader().setDefaultSectionSize(36)
             self._meetings_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-            self._meetings_table.setMaximumHeight(180)
+            self._meetings_table.setMinimumHeight(120)
             group_layout.addWidget(self._meetings_table)
 
             # Add Selected button
@@ -339,7 +350,8 @@ class DayEntryDialog(QDialog):
             btn_layout.addStretch()
             group_layout.addLayout(btn_layout)
 
-        layout.addWidget(self._meetings_group)
+            # Add with stretch factor so it can expand when there are meetings
+            layout.addWidget(self._meetings_group, 1)
 
     def _create_add_entry_form(self, layout: QVBoxLayout) -> None:
         """Create the add entry form."""
