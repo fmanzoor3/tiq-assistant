@@ -288,14 +288,14 @@ class DayEntryDialog(QDialog):
         self._entries_table = QTableWidget()
         self._entries_table.setColumnCount(6)
         self._entries_table.setHorizontalHeaderLabels([
-            "Project", "Ticket", "Hours", "Activity", "Description", "Actions"
+            "Project", "Hours", "Activity", "Description", "Save", "Delete"
         ])
         self._entries_table.horizontalHeader().setSectionResizeMode(
-            4, QHeaderView.ResizeMode.Stretch
+            3, QHeaderView.ResizeMode.Stretch  # Description column stretches
         )
         self._entries_table.verticalHeader().setVisible(False)
         self._entries_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._entries_table.setMaximumHeight(150)
+        self._entries_table.setMaximumHeight(180)
         group_layout.addWidget(self._entries_table)
 
         layout.addWidget(group)
@@ -447,27 +447,52 @@ class DayEntryDialog(QDialog):
                 self._project_combo.addItem(project.name, project.id)
 
     def _refresh_entries(self) -> None:
-        """Refresh the entries table."""
+        """Refresh the entries table with editable widgets."""
         entries = self._store.get_entries(start_date=self._target_date, end_date=self._target_date)
 
-        # Filter by session if needed
-        if self._session == SessionType.MORNING:
-            # For morning session, we might want to show only morning entries
-            # But for simplicity, show all entries for the day
-            pass
+        # Store entries for later reference
+        self._current_entries = entries
 
         self._entries_table.setRowCount(len(entries))
 
         for i, entry in enumerate(entries):
-            self._entries_table.setItem(i, 0, QTableWidgetItem(entry.project_name or "-"))
-            self._entries_table.setItem(i, 1, QTableWidgetItem(entry.ticket_number or "-"))
-            self._entries_table.setItem(i, 2, QTableWidgetItem(str(entry.hours)))
-            self._entries_table.setItem(i, 3, QTableWidgetItem(entry.activity_code.value))
+            # Project (read-only label)
+            project_item = QTableWidgetItem(entry.project_name or "-")
+            project_item.setFlags(project_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self._entries_table.setItem(i, 0, project_item)
 
-            desc = entry.description
-            if len(desc) > 40:
-                desc = desc[:37] + "..."
-            self._entries_table.setItem(i, 4, QTableWidgetItem(desc))
+            # Hours (editable spinner)
+            hours_spin = QSpinBox()
+            hours_spin.setRange(1, 8)
+            hours_spin.setValue(entry.hours)
+            self._entries_table.setCellWidget(i, 1, hours_spin)
+
+            # Activity (editable dropdown)
+            activity_combo = QComboBox()
+            for code in ActivityCode:
+                activity_combo.addItem(code.value, code)
+            # Set current activity
+            for j, code in enumerate(ActivityCode):
+                if code == entry.activity_code:
+                    activity_combo.setCurrentIndex(j)
+                    break
+            self._entries_table.setCellWidget(i, 2, activity_combo)
+
+            # Description (editable text)
+            desc_edit = QLineEdit()
+            desc_edit.setText(entry.description)
+            self._entries_table.setCellWidget(i, 3, desc_edit)
+
+            # Save button
+            save_btn = QPushButton("Save")
+            save_btn.setStyleSheet(f"""
+                background-color: {self.COLORS['success']};
+                color: white;
+                border: none;
+                padding: 4px 8px;
+            """)
+            save_btn.clicked.connect(lambda checked, idx=i: self._save_entry(idx))
+            self._entries_table.setCellWidget(i, 4, save_btn)
 
             # Delete button
             delete_btn = QPushButton("Delete")
@@ -669,6 +694,36 @@ class DayEntryDialog(QDialog):
                 self, "Meetings Added",
                 f"Added {added_count} meeting(s) as timesheet entries."
             )
+
+    def _save_entry(self, row: int) -> None:
+        """Save changes to an entry."""
+        if row >= len(self._current_entries):
+            return
+
+        entry = self._current_entries[row]
+
+        # Get values from widgets
+        hours_spin = self._entries_table.cellWidget(row, 1)
+        activity_combo = self._entries_table.cellWidget(row, 2)
+        desc_edit = self._entries_table.cellWidget(row, 3)
+
+        new_hours = hours_spin.value() if hours_spin else entry.hours
+        new_activity = activity_combo.currentData() if activity_combo else entry.activity_code
+        new_description = desc_edit.text().strip() if desc_edit else entry.description
+
+        if not new_description:
+            QMessageBox.warning(self, "Error", "Description cannot be empty.")
+            return
+
+        # Update entry
+        entry.hours = new_hours
+        entry.activity_code = new_activity
+        entry.description = new_description
+
+        self._store.save_entry(entry)
+        self._update_progress()
+
+        QMessageBox.information(self, "Saved", "Entry updated successfully.")
 
     def _delete_entry(self, entry_id: str) -> None:
         """Delete an entry."""
