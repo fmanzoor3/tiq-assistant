@@ -141,6 +141,14 @@ class SQLiteStore:
                     created_at TEXT NOT NULL
                 );
 
+                -- Skipped days (sick days, etc. that don't need entries)
+                CREATE TABLE IF NOT EXISTS skipped_days (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    skip_date TEXT NOT NULL UNIQUE,
+                    reason TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
                 -- Indexes
                 CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
                 CREATE INDEX IF NOT EXISTS idx_entries_status ON timesheet_entries(status);
@@ -499,6 +507,50 @@ class SQLiteStore:
                     VALUES (?, ?, ?, ?, 1)
                 """, (project.id, project.name, project.ticket_number, now))
             conn.commit()
+
+    # ==================== Skipped Days ====================
+
+    def skip_day(self, skip_date: date, reason: str) -> None:
+        """Mark a day as skipped (sick day, etc.)."""
+        now = datetime.now().isoformat()
+        with self._get_connection() as conn:
+            conn.execute("""
+                INSERT OR REPLACE INTO skipped_days (skip_date, reason, created_at)
+                VALUES (?, ?, ?)
+            """, (skip_date.isoformat(), reason, now))
+            conn.commit()
+
+    def unskip_day(self, skip_date: date) -> None:
+        """Remove a day from skipped days."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "DELETE FROM skipped_days WHERE skip_date = ?",
+                (skip_date.isoformat(),)
+            )
+            conn.commit()
+
+    def is_day_skipped(self, check_date: date) -> tuple[bool, str]:
+        """Check if a day is skipped. Returns (is_skipped, reason)."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT reason FROM skipped_days WHERE skip_date = ?",
+                (check_date.isoformat(),)
+            ).fetchone()
+            if row:
+                return True, row["reason"]
+            return False, ""
+
+    def get_skipped_days(self, start_date: date, end_date: date) -> dict[date, str]:
+        """Get all skipped days in a date range. Returns dict of date -> reason."""
+        with self._get_connection() as conn:
+            rows = conn.execute("""
+                SELECT skip_date, reason FROM skipped_days
+                WHERE skip_date >= ? AND skip_date <= ?
+            """, (start_date.isoformat(), end_date.isoformat())).fetchall()
+            return {
+                date.fromisoformat(row["skip_date"]): row["reason"]
+                for row in rows
+            }
 
     # ==================== Outlook Meetings ====================
 

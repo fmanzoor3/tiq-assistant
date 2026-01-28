@@ -403,6 +403,12 @@ class DayEntryDialog(QDialog):
         """Create the bottom action buttons."""
         btn_layout = QHBoxLayout()
 
+        # Skip Day button - toggles between Skip/Undo Skip based on current state
+        self._skip_btn = QPushButton()
+        self._update_skip_button()
+        self._skip_btn.clicked.connect(self._toggle_skip_day)
+        btn_layout.addWidget(self._skip_btn)
+
         # Snooze button (only for scheduled popups)
         if self._session != SessionType.FULL_DAY:
             snooze_btn = QPushButton("Remind in 15 min")
@@ -787,3 +793,50 @@ class DayEntryDialog(QDialog):
     def get_snooze_requested(self) -> bool:
         """Check if snooze was requested."""
         return self.result() == 2
+
+    def _update_skip_button(self) -> None:
+        """Update the skip button text and style based on current skip state."""
+        is_skipped, _ = self._store.is_day_skipped(self._target_date)
+
+        if is_skipped:
+            self._skip_btn.setText("Undo Skip")
+            self._skip_btn.setStyleSheet(f"""
+                background-color: {self.COLORS['warning']};
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                font-weight: bold;
+            """)
+        else:
+            self._skip_btn.setText("Skip Day")
+            self._skip_btn.setStyleSheet(f"""
+                background-color: #6B7280;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                font-weight: bold;
+            """)
+
+    def _toggle_skip_day(self) -> None:
+        """Toggle the skip status of this day."""
+        is_skipped, _ = self._store.is_day_skipped(self._target_date)
+
+        if is_skipped:
+            # Unskip the day
+            self._store.unskip_day(self._target_date)
+            self._update_skip_button()
+            self._update_progress()
+        else:
+            # Skip the day - confirm if there are existing entries
+            entries = self._store.get_entries(start_date=self._target_date, end_date=self._target_date)
+            if entries:
+                reply = QMessageBox.question(
+                    self, "Confirm Skip Day",
+                    f"This day has {len(entries)} existing entries. They will remain but this day will be marked as skipped.\n\nContinue?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
+
+            self._store.skip_day(self._target_date, "Skipped")
+            self.accept()  # Close the dialog after skipping

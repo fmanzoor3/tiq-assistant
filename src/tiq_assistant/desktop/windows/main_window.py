@@ -441,6 +441,14 @@ class MainWindow(QMainWindow):
         # Get workdays for the month
         workdays = holiday_service.get_workdays_in_month(month_start.year, month_start.month)
 
+        # Get skipped days for the month
+        if workdays:
+            first_date = workdays[0][0]
+            last_date = workdays[-1][0]
+            skipped_days = self._store.get_skipped_days(first_date, last_date)
+        else:
+            skipped_days = {}
+
         # Calculate filled hours per day
         hours_by_date: dict[date, int] = {}
         for entry in entries:
@@ -463,11 +471,14 @@ class MainWindow(QMainWindow):
         for i, (work_date, expected_hours) in enumerate(workdays):
             filled_hours = hours_by_date.get(work_date, 0)
             remaining = max(0, expected_hours - filled_hours)
+            is_skipped = work_date in skipped_days
 
-            total_expected += expected_hours
-            total_filled += filled_hours
+            # Don't count skipped days in expected hours
+            if not is_skipped:
+                total_expected += expected_hours
+                total_filled += filled_hours
 
-            if filled_hours >= expected_hours:
+            if is_skipped or filled_hours >= expected_hours:
                 days_complete += 1
             else:
                 days_incomplete += 1
@@ -500,7 +511,11 @@ class MainWindow(QMainWindow):
             self._workday_table.setItem(i, 4, remaining_item)
 
             # Determine status and row color (softer, muted colors)
-            if filled_hours >= expected_hours:
+            if is_skipped:
+                skip_reason = skipped_days[work_date]
+                status_item = QTableWidgetItem(f"⊘ {skip_reason}")
+                row_color = "#E5E7EB"  # Gray for skipped
+            elif filled_hours >= expected_hours:
                 status_item = QTableWidgetItem("✓ Complete")
                 row_color = "#E8F5E9"  # Soft mint green
             elif filled_hours > 0:
