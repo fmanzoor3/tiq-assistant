@@ -597,8 +597,14 @@ class DayEntryDialog(QDialog):
                     if item:
                         item.setBackground(QBrush(QColor(self.COLORS['success_light'])))
 
+    def _get_remaining_hours(self) -> int:
+        """Calculate remaining hours for the day."""
+        entries = self._store.get_entries(start_date=self._target_date, end_date=self._target_date)
+        filled_hours = sum(e.hours for e in entries)
+        return max(0, self._target_hours - filled_hours)
+
     def _update_progress(self) -> None:
-        """Update the progress indicator."""
+        """Update the progress indicator and default hours spinner."""
         entries = self._store.get_entries(start_date=self._target_date, end_date=self._target_date)
         filled_hours = sum(e.hours for e in entries)
         remaining = max(0, self._target_hours - filled_hours)
@@ -609,6 +615,12 @@ class DayEntryDialog(QDialog):
         else:
             self._progress_label.setText(f"{filled_hours}h / {self._target_hours}h ({remaining}h remaining)")
             self._progress_label.setStyleSheet(f"color: {self.COLORS['text_secondary']};")
+
+        # Update the hours spinner to default to remaining hours
+        if remaining > 0:
+            self._hours_spin.setValue(min(remaining, 8))
+        else:
+            self._hours_spin.setValue(1)
 
     def _add_manual_entry(self) -> None:
         """Add a manual entry."""
