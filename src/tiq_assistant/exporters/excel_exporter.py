@@ -248,7 +248,7 @@ def get_monthly_export_path(target_date: Optional[datetime] = None) -> Path:
     # Generate base filename with month name and year
     month_name = target_date.strftime("%B")  # Full month name (e.g., "January")
     year = target_date.strftime("%Y")
-    base_pattern = f"Timesheet_{month_name}_{year}"
+    base_pattern = f"{month_name}_{year}"
 
     # Find existing versions for this month
     existing_versions = []
