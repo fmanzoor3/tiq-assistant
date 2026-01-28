@@ -124,7 +124,7 @@ class DayEntryDialog(QDialog):
         self.setWindowTitle(f"Time Entry: {day_name}, {date_str}{session_label}")
         self.setWindowIcon(create_app_icon())
         self.setMinimumSize(800, 600)
-        self.resize(900, 700)  # Default size, can be resized larger
+        self.resize(1100, 800)  # Larger default size, can be resized or maximized
         self.setModal(True)
 
         # Allow maximize button
