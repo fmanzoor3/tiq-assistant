@@ -428,7 +428,7 @@ class DayEntryDialog(QDialog):
         self._update_progress()
 
     def _load_projects(self) -> None:
-        """Load projects into the dropdown."""
+        """Load projects into the dropdown with default project pre-selected."""
         self._project_combo.clear()
         self._project_combo.addItem("-- Select Project --", None)
 
@@ -436,15 +436,33 @@ class DayEntryDialog(QDialog):
         recent = self._store.get_recent_projects(limit=5)
         recent_ids = {rp.project_id for rp in recent}
 
+        # Get default project from settings
+        settings = self._store.get_settings()
+        default_project_id = settings.default_project_id
+
+        # Track index to select
+        selected_idx = 0
+        current_idx = 1  # Start after "-- Select Project --"
+
         # Add recent projects first
         if recent:
             for rp in recent:
                 self._project_combo.addItem(f"★ {rp.project_name}", rp.project_id)
+                if default_project_id and rp.project_id == default_project_id:
+                    selected_idx = current_idx
+                current_idx += 1
 
         # Add all other projects
         for project in projects:
             if project.id not in recent_ids:
                 self._project_combo.addItem(project.name, project.id)
+                if default_project_id and project.id == default_project_id:
+                    selected_idx = current_idx
+                current_idx += 1
+
+        # Select the default project
+        if selected_idx > 0:
+            self._project_combo.setCurrentIndex(selected_idx)
 
     def _refresh_entries(self) -> None:
         """Refresh the entries table with editable widgets."""

@@ -153,6 +153,7 @@ class UserSettings(BaseModel):
     default_location: str = "ANKARA"
     default_activity_code: ActivityCode = ActivityCode.GLST
     meeting_activity_code: ActivityCode = ActivityCode.TPLNT
+    default_project_id: Optional[str] = None  # Default project for new entries
 
     # Matching settings
     min_match_confidence: float = 0.5

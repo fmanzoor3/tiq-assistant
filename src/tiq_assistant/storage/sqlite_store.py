@@ -78,6 +78,7 @@ class SQLiteStore:
                     default_location TEXT NOT NULL,
                     default_activity_code TEXT NOT NULL,
                     meeting_activity_code TEXT NOT NULL,
+                    default_project_id TEXT,
                     min_match_confidence REAL DEFAULT 0.5,
                     skip_canceled_meetings INTEGER DEFAULT 1,
                     min_meeting_duration_minutes INTEGER DEFAULT 15
@@ -148,6 +149,19 @@ class SQLiteStore:
                 CREATE INDEX IF NOT EXISTS idx_meetings_start ON outlook_meetings(start_datetime);
                 CREATE INDEX IF NOT EXISTS idx_holidays_date ON holidays(holiday_date);
             """)
+            conn.commit()
+
+            # Run migrations for existing databases
+            self._run_migrations(conn)
+
+    def _run_migrations(self, conn: sqlite3.Connection) -> None:
+        """Run database migrations for existing databases."""
+        # Check if default_project_id column exists in user_settings
+        cursor = conn.execute("PRAGMA table_info(user_settings)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if 'default_project_id' not in columns:
+            conn.execute("ALTER TABLE user_settings ADD COLUMN default_project_id TEXT")
             conn.commit()
 
     # ==================== Projects ====================
@@ -368,6 +382,7 @@ class SQLiteStore:
                 default_location=row["default_location"],
                 default_activity_code=ActivityCode(row["default_activity_code"]),
                 meeting_activity_code=ActivityCode(row["meeting_activity_code"]),
+                default_project_id=row["default_project_id"],
                 min_match_confidence=row["min_match_confidence"],
                 skip_canceled_meetings=bool(row["skip_canceled_meetings"]),
                 min_meeting_duration_minutes=row["min_meeting_duration_minutes"],
@@ -379,14 +394,15 @@ class SQLiteStore:
             conn.execute("""
                 INSERT OR REPLACE INTO user_settings
                 (id, consultant_id, default_location, default_activity_code,
-                 meeting_activity_code, min_match_confidence, skip_canceled_meetings,
-                 min_meeting_duration_minutes)
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?)
+                 meeting_activity_code, default_project_id, min_match_confidence,
+                 skip_canceled_meetings, min_meeting_duration_minutes)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 user_settings.consultant_id,
                 user_settings.default_location,
                 user_settings.default_activity_code.value,
                 user_settings.meeting_activity_code.value,
+                user_settings.default_project_id,
                 user_settings.min_match_confidence,
                 1 if user_settings.skip_canceled_meetings else 0,
                 user_settings.min_meeting_duration_minutes,

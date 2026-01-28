@@ -686,6 +686,11 @@ class MainWindow(QMainWindow):
         self._location_input = QLineEdit()
         user_layout.addRow("Default Location:", self._location_input)
 
+        # Default project dropdown
+        self._default_project_combo = QComboBox()
+        self._default_project_combo.addItem("-- None --", None)
+        user_layout.addRow("Default Project:", self._default_project_combo)
+
         layout.addWidget(user_group)
 
         # Activity codes
@@ -796,6 +801,17 @@ class MainWindow(QMainWindow):
         self._consultant_id_input.setText(settings.consultant_id)
         self._location_input.setText(settings.default_location)
 
+        # Populate default project dropdown
+        self._default_project_combo.clear()
+        self._default_project_combo.addItem("-- None --", None)
+        projects = self._store.get_projects()
+        selected_idx = 0
+        for i, project in enumerate(projects):
+            self._default_project_combo.addItem(project.name, project.id)
+            if settings.default_project_id and project.id == settings.default_project_id:
+                selected_idx = i + 1  # +1 because of "-- None --" option
+        self._default_project_combo.setCurrentIndex(selected_idx)
+
         # Set activity code combo boxes
         for i in range(self._default_activity.count()):
             if self._default_activity.itemData(i) == settings.default_activity_code:
@@ -819,6 +835,7 @@ class MainWindow(QMainWindow):
             default_location=self._location_input.text().strip() or "ANKARA",
             default_activity_code=self._default_activity.currentData(),
             meeting_activity_code=self._meeting_activity.currentData(),
+            default_project_id=self._default_project_combo.currentData(),
             skip_canceled_meetings=self._skip_canceled.isChecked(),
             min_meeting_duration_minutes=self._min_duration.value(),
         )
