@@ -5,7 +5,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QSpinBox, QCheckBox, QGroupBox, QWidget,
-    QFormLayout, QMessageBox, QTimeEdit, QTabWidget
+    QFormLayout, QMessageBox, QTimeEdit, QTabWidget, QComboBox
 )
 from PyQt6.QtCore import QTime
 
@@ -148,6 +148,13 @@ class SettingsDialog(QDialog):
         self._default_location = QLineEdit()
         user_layout.addRow("Default Location:", self._default_location)
 
+        # Default project used for quick entry and auto-fill top-ups.
+        self._default_project = QComboBox()
+        self._default_project.addItem("-- None --", None)
+        for project in self._store.get_projects():
+            self._default_project.addItem(project.name, project.id)
+        user_layout.addRow("Default Project:", self._default_project)
+
         layout.addWidget(user_group)
 
         # Matching settings
@@ -196,6 +203,12 @@ class SettingsDialog(QDialog):
         self._skip_canceled.setChecked(settings.skip_canceled_meetings)
         self._min_duration.setValue(settings.min_meeting_duration_minutes)
 
+        # Select the saved default project, if any.
+        if settings.default_project_id:
+            idx = self._default_project.findData(settings.default_project_id)
+            if idx >= 0:
+                self._default_project.setCurrentIndex(idx)
+
     def _save_settings(self) -> None:
         """Save settings to the database."""
         # Build schedule config
@@ -217,6 +230,7 @@ class SettingsDialog(QDialog):
         settings = self._store.get_settings()
         settings.consultant_id = self._consultant_id.text().strip() or "FMANZOOR"
         settings.default_location = self._default_location.text().strip() or "ANKARA"
+        settings.default_project_id = self._default_project.currentData()
         settings.skip_canceled_meetings = self._skip_canceled.isChecked()
         settings.min_meeting_duration_minutes = self._min_duration.value()
 
@@ -228,10 +242,16 @@ class SettingsDialog(QDialog):
         if self._scheduler and self._scheduler.is_running:
             self._scheduler.reschedule(config)
 
-        # Handle auto-start
-        self._update_auto_start(config.auto_start_with_windows)
-
-        QMessageBox.information(self, "Settings Saved", "Settings have been saved.")
+        # Handle auto-start and report if it couldn't be applied.
+        auto_ok = self._update_auto_start(config.auto_start_with_windows)
+        if config.auto_start_with_windows and not auto_ok:
+            QMessageBox.warning(
+                self, "Auto-start",
+                "Settings were saved, but the 'Start with Windows' shortcut "
+                "could not be created. You can still start the app manually."
+            )
+        else:
+            QMessageBox.information(self, "Settings Saved", "Settings have been saved.")
         self.accept()
 
     def _parse_time(self, time_str: str) -> QTime:
@@ -239,38 +259,18 @@ class SettingsDialog(QDialog):
         parts = time_str.split(":")
         return QTime(int(parts[0]), int(parts[1]))
 
-    def _update_auto_start(self, enabled: bool) -> None:
-        """Update Windows auto-start setting."""
+    def _update_auto_start(self, enabled: bool) -> bool:
+        """Update Windows auto-start via a reliable Startup-folder shortcut.
+
+        Delegates to :mod:`tiq_assistant.desktop.autostart`, which creates a
+        ``pythonw`` shortcut (no console window) with an explicit working
+        directory so it works regardless of how the app was installed.
+
+        Returns True if the desired state was achieved.
+        """
         try:
-            import winreg
-            import sys
-            import os
-
-            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
-            app_name = "TIQ Assistant"
-
-            # Get path to the executable or script
-            if getattr(sys, 'frozen', False):
-                # Running as compiled executable
-                exe_path = sys.executable
-            else:
-                # Running as script
-                exe_path = f'"{sys.executable}" -m tiq_assistant.desktop.app'
-
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                key_path,
-                0,
-                winreg.KEY_SET_VALUE | winreg.KEY_QUERY_VALUE
-            ) as key:
-                if enabled:
-                    winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
-                else:
-                    try:
-                        winreg.DeleteValue(key, app_name)
-                    except FileNotFoundError:
-                        pass  # Already deleted
-
+            from tiq_assistant.desktop import autostart
+            return autostart.sync(enabled)
         except Exception as e:
-            # Not critical, just log
             print(f"Could not update auto-start setting: {e}")
+            return False

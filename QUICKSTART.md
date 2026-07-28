@@ -172,9 +172,28 @@ TIQ Assistant/
 - Outlook doesn't need to be open, but must be configured
 
 ### Popup doesn't appear at scheduled time
-- Check if it's a weekday
+- Check if it's a weekday (popups are suppressed on weekends, national
+  holidays, and days you've marked as skipped)
 - Verify times in Settings
 - Make sure the app is running (check system tray)
+- Popups are resilient to sleep/wake: if the laptop was asleep at the
+  scheduled time, the reminder appears when it wakes (any time up to the end
+  of the workday). Opening the app after a missed reminder also surfaces it.
+
+### App doesn't start when I log in
+- Open Settings and make sure **"Start with Windows"** is checked, then Save.
+- This creates a shortcut in your Startup folder
+  (`shell:startup` → "TIQ Assistant.lnk"). The app also re-creates/repairs
+  this shortcut every time it launches while the option is enabled, so moving
+  the project folder is handled automatically.
+- To confirm: press `Win+R`, type `shell:startup`, and check the shortcut is
+  present.
+
+### I missed some days
+- On launch, the app scans the last two weeks for workdays with no entries
+  (ignoring weekends/holidays/skipped days) and shows a tray notification.
+- Open the Dashboard, click a flagged day, and use **"Auto-fill Day"** to add
+  meetings + top up remaining hours on your default project in one click.
 
 ### Can't see tray icon
 - Click the ^ arrow in system tray to show hidden icons

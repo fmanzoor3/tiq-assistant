@@ -154,14 +154,64 @@ class HourSuggestionService:
         session_start: time,
         session_end: time
     ) -> list:
+        """Return only the entries that belong to ``session``.
+
+        Timesheet entries don't store a time of day, so we attribute them as
+        follows:
+
+        - Calendar-sourced entries: use the linked meeting's start time when it
+          can be found, so they land in the correct session.
+        - Manual entries (and calendar entries whose meeting can't be resolved):
+          attributed to the *afternoon* session, which is the point at which the
+          full day is normally reconciled. This guarantees every entry is
+          counted in exactly one session, so morning + afternoon never
+          double-counts (the previous implementation returned all entries for
+          both sessions, inflating logged hours).
         """
-        Filter entries by session. Since entries don't have time,
-        we use the source to determine session if from calendar,
-        otherwise we distribute based on creation time.
-        """
-        # For now, return all entries for the date and let the UI handle it
-        # In a more sophisticated implementation, we could track session per entry
-        return entries
+        from tiq_assistant.core.models import EntrySource
+
+        result = []
+        for entry in entries:
+            entry_session = self._infer_entry_session(
+                entry, session_start, session_end
+            )
+            if entry_session == session:
+                result.append(entry)
+        return result
+
+    def _infer_entry_session(
+        self,
+        entry,
+        morning_start: time,
+        morning_end: time,
+    ) -> SessionType:
+        """Best-effort attribution of an entry to a single session."""
+        from tiq_assistant.core.models import EntrySource
+
+        # Try to place calendar entries by their source meeting's start time.
+        source_event_id = getattr(entry, "source_event_id", None)
+        if getattr(entry, "source", None) == EntrySource.CALENDAR and source_event_id:
+            meeting = self._find_meeting(entry.entry_date, source_event_id)
+            if meeting is not None:
+                lunch_start = self._parse_time(
+                    self.store.get_schedule_config().lunch_start
+                )
+                if meeting.start_datetime.time() < lunch_start:
+                    return SessionType.MORNING
+                return SessionType.AFTERNOON
+
+        # Manual / unresolved entries default to the afternoon (reconciliation).
+        return SessionType.AFTERNOON
+
+    def _find_meeting(self, target_date: date, meeting_id: str):
+        """Find a cached meeting by id on a given date, or None."""
+        try:
+            for m in self.store.get_meetings_for_date(target_date):
+                if m.id == meeting_id:
+                    return m
+        except Exception:
+            pass
+        return None
 
     def _filter_meetings_by_session(
         self,

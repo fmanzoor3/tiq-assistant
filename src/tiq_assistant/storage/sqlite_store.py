@@ -364,6 +364,44 @@ class SQLiteStore:
             exported_at=datetime.fromisoformat(row["exported_at"]) if row["exported_at"] else None,
         )
 
+    def get_description_history(
+        self,
+        project_name: Optional[str] = None,
+        limit: int = 8,
+    ) -> list[str]:
+        """Return distinct past entry descriptions, most useful first.
+
+        Ranking favours descriptions that are both recent and frequently used,
+        so auto-fill can pre-fill top-up lines with real text the user has
+        actually written before (instead of a generic placeholder).
+
+        Args:
+            project_name: If given, restrict to descriptions used on that
+                project. If None, return descriptions across all projects.
+            limit: Maximum number of distinct descriptions to return.
+        """
+        with self._get_connection() as conn:
+            query = """
+                SELECT description,
+                       COUNT(*) AS uses,
+                       MAX(entry_date) AS last_used
+                FROM timesheet_entries
+                WHERE description IS NOT NULL AND TRIM(description) != ''
+            """
+            params: list = []
+            if project_name:
+                query += " AND project_name = ?"
+                params.append(project_name)
+            query += """
+                GROUP BY description
+                ORDER BY last_used DESC, uses DESC
+                LIMIT ?
+            """
+            params.append(limit)
+
+            rows = conn.execute(query, params).fetchall()
+            return [row["description"] for row in rows]
+
     def mark_entries_exported(self, entry_ids: list[str]) -> None:
         """Mark entries as exported."""
         now = datetime.now().isoformat()
@@ -628,8 +666,9 @@ class SQLiteStore:
 
     def clear_old_meetings(self, days_to_keep: int = 7) -> None:
         """Clear meetings older than specified days."""
+        from datetime import timedelta
         cutoff = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        cutoff = cutoff.replace(day=cutoff.day - days_to_keep)
+        cutoff = cutoff - timedelta(days=days_to_keep)
 
         with self._get_connection() as conn:
             conn.execute("""

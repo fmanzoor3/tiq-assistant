@@ -174,7 +174,12 @@ class MatchResult(BaseModel):
 
 
 class SessionType(str, Enum):
-    """Time entry session type."""
+    """Time entry session type.
+
+    This is the single source of truth for session types across the whole app
+    (desktop dialogs, scheduler, and services all import it from here).
+    """
+    FULL_DAY = "full_day"
     MORNING = "morning"
     AFTERNOON = "afternoon"
 

@@ -1,7 +1,6 @@
 """Dialog for entering timesheet entries for a specific day."""
 
 from datetime import date, datetime, time, timedelta
-from enum import Enum
 from typing import Optional
 
 from PyQt6.QtWidgets import (
@@ -14,19 +13,18 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
 
 from tiq_assistant.core.models import (
-    Project, TimesheetEntry, ActivityCode, EntryStatus, EntrySource, OutlookMeeting
+    Project, TimesheetEntry, ActivityCode, EntryStatus, EntrySource, OutlookMeeting,
+    SessionType,
 )
 from tiq_assistant.storage.sqlite_store import get_store
 from tiq_assistant.services.matching_service import MatchingService
 from tiq_assistant.integrations.outlook_reader import get_outlook_reader, OutlookNotAvailableError
 from tiq_assistant.desktop.icon import create_app_icon
 
-
-class SessionType(Enum):
-    """Type of entry session."""
-    FULL_DAY = "full_day"
-    MORNING = "morning"
-    AFTERNOON = "afternoon"
+# SessionType is imported from core.models (single source of truth) and
+# re-exported here for backward compatibility with existing imports like
+# ``from ...day_entry_dialog import SessionType``.
+__all__ = ["DayEntryDialog", "SessionType"]
 
 
 class DayEntryDialog(QDialog):
@@ -54,9 +52,13 @@ class DayEntryDialog(QDialog):
         'text_secondary': '#605E5C',
     }
 
-    # Session time boundaries
+    # Session time boundaries (fallbacks; real values come from config)
     MORNING_END = time(12, 15)
     AFTERNOON_START = time(13, 30)
+
+    # Max hours a single entry can hold. Kept above 8 so full-day and
+    # fill-to-target flows aren't artificially capped.
+    MAX_ENTRY_HOURS = 12
 
     def __init__(
         self,
@@ -82,33 +84,65 @@ class DayEntryDialog(QDialog):
         self._load_data()
 
     def _get_target_hours(self) -> int:
-        """Get target hours based on session type."""
+        """Get target hours based on session type and the user's configuration.
+
+        Reads the configured targets from the schedule config (instead of
+        hardcoding 3/5/8) so that changing targets in Settings actually takes
+        effect. On half-day holidays the full-day target is reduced to 4h.
+        """
+        config = self._store.get_schedule_config()
+
         if self._session == SessionType.MORNING:
-            return 3
+            return config.morning_hours_target
         elif self._session == SessionType.AFTERNOON:
-            return 5
-        else:
-            return 8
+            return config.afternoon_hours_target
+
+        # Full day: honour half-day holidays (4h expected).
+        try:
+            from tiq_assistant.core.holidays import get_holiday_service
+            if get_holiday_service().is_half_day_holiday(self._target_date):
+                return 4
+        except Exception:
+            pass
+
+        return config.morning_hours_target + config.afternoon_hours_target
 
     def _filter_meetings(self, all_meetings: list[OutlookMeeting]) -> list[OutlookMeeting]:
-        """Filter meetings for this day and session."""
+        """Filter meetings for this day and session.
+
+        Session boundaries come from the user's configured lunch window so they
+        stay consistent with the popup times and target-hour calculations.
+        """
         day_meetings = [
             m for m in all_meetings
             if m.start_datetime.date() == self._target_date
         ]
 
+        config = self._store.get_schedule_config()
+        morning_end = self._parse_config_time(config.lunch_start, self.MORNING_END)
+        afternoon_start = self._parse_config_time(config.lunch_end, self.AFTERNOON_START)
+
         if self._session == SessionType.MORNING:
             return [
                 m for m in day_meetings
-                if m.start_datetime.time() < self.MORNING_END
+                if m.start_datetime.time() < morning_end
             ]
         elif self._session == SessionType.AFTERNOON:
             return [
                 m for m in day_meetings
-                if m.start_datetime.time() >= self.AFTERNOON_START
+                if m.start_datetime.time() >= afternoon_start
             ]
         else:
             return day_meetings
+
+    @staticmethod
+    def _parse_config_time(time_str: str, fallback: time) -> time:
+        """Parse an 'HH:MM' config string into a time, falling back on error."""
+        try:
+            parts = time_str.split(":")
+            return time(int(parts[0]), int(parts[1]))
+        except Exception:
+            return fallback
 
     def _setup_ui(self) -> None:
         """Set up the dialog UI."""
@@ -367,7 +401,7 @@ class DayEntryDialog(QDialog):
         # Hours
         form_layout.addWidget(QLabel("Hours:"))
         self._hours_spin = QSpinBox()
-        self._hours_spin.setRange(1, 8)
+        self._hours_spin.setRange(1, self.MAX_ENTRY_HOURS)
         self._hours_spin.setValue(1)
         form_layout.addWidget(self._hours_spin)
 
@@ -408,6 +442,22 @@ class DayEntryDialog(QDialog):
         self._update_skip_button()
         self._skip_btn.clicked.connect(self._toggle_skip_day)
         btn_layout.addWidget(self._skip_btn)
+
+        # Auto-fill: draft entries for meetings + top up to target in one click.
+        autofill_btn = QPushButton("Auto-fill Day")
+        autofill_btn.setToolTip(
+            "Add any un-added meetings and top up remaining hours "
+            "on your default project to reach the target."
+        )
+        autofill_btn.setStyleSheet(f"""
+            background-color: {self.COLORS['success']};
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-weight: bold;
+        """)
+        autofill_btn.clicked.connect(self._auto_fill_day)
+        btn_layout.addWidget(autofill_btn)
 
         # Snooze button (only for scheduled popups)
         if self._session != SessionType.FULL_DAY:
@@ -499,7 +549,7 @@ class DayEntryDialog(QDialog):
 
             # Hours (editable spinner)
             hours_spin = QSpinBox()
-            hours_spin.setRange(1, 8)
+            hours_spin.setRange(1, self.MAX_ENTRY_HOURS)
             hours_spin.setValue(entry.hours)
             self._entries_table.setCellWidget(i, 1, hours_spin)
 
@@ -572,7 +622,7 @@ class DayEntryDialog(QDialog):
 
             # Hours spinner
             hours_spin = QSpinBox()
-            hours_spin.setRange(1, 8)
+            hours_spin.setRange(1, self.MAX_ENTRY_HOURS)
             hours_spin.setValue(max(1, round(meeting.duration_hours)))
             self._meetings_table.setCellWidget(i, 3, hours_spin)
 
@@ -636,7 +686,7 @@ class DayEntryDialog(QDialog):
 
         # Update the hours spinner to default to remaining hours
         if remaining > 0:
-            self._hours_spin.setValue(min(remaining, 8))
+            self._hours_spin.setValue(min(remaining, self.MAX_ENTRY_HOURS))
         else:
             self._hours_spin.setValue(1)
 
@@ -672,6 +722,63 @@ class DayEntryDialog(QDialog):
 
         self._description_edit.clear()
         self._refresh_entries()
+
+    def _auto_fill_day(self) -> None:
+        """Draft the day's entries automatically.
+
+        Two steps:
+        1. Add every un-added meeting shown in the meetings table (using its
+           matched project / suggested hours), just like clicking each "Add".
+        2. If the day is still short of target, open a review dialog to
+           distribute the remaining hours across one or more specific entries
+           (project + hours + description, pre-filled from the user's history).
+
+        Everything is saved as DRAFT so the user can review/adjust before export.
+        """
+        meetings_added = 0
+
+        # Step 1: add un-added meetings from the table.
+        if hasattr(self, "_meetings_table"):
+            for row in range(self._meetings_table.rowCount()):
+                add_btn = self._meetings_table.cellWidget(row, 6)
+                if add_btn and add_btn.isEnabled():
+                    self._add_single_meeting(row)
+                    meetings_added += 1
+
+        # Step 2: distribute remaining hours via the review dialog.
+        remaining = self._get_remaining_hours()
+        topup_added = 0
+        if remaining > 0:
+            from tiq_assistant.desktop.windows.topup_dialog import TopUpDialog
+
+            dialog = TopUpDialog(
+                target_date=self._target_date,
+                remaining_hours=remaining,
+                parent=self,
+            )
+            dialog.exec()
+            topup_added = dialog.get_saved_count()
+
+        self._refresh_entries()
+
+        # Feedback.
+        parts = []
+        if meetings_added:
+            parts.append(f"{meetings_added} meeting(s)")
+        if topup_added:
+            parts.append(f"{topup_added} entry(ies) for the remaining {remaining}h")
+
+        if parts:
+            QMessageBox.information(
+                self, "Auto-fill Complete",
+                "Added " + " and ".join(parts) + ".\n\n"
+                "Entries are saved as drafts — review before exporting."
+            )
+        elif remaining <= 0:
+            QMessageBox.information(
+                self, "Nothing to Add",
+                "This day already meets its target hours."
+            )
 
     def _add_single_meeting(self, row: int) -> None:
         """Add a single meeting as an entry."""

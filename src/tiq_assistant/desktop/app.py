@@ -35,6 +35,7 @@ class TIQDesktopApp:
         self._scheduler: Optional[SchedulerManager] = None
         self._current_popup = None
         self._main_window = None
+        self._missed_days: list = []
 
     def run(self) -> int:
         """
@@ -63,6 +64,17 @@ class TIQDesktopApp:
         store = get_store()
         logger.info("Database initialized")
 
+        # Reconcile Windows auto-start with the saved preference on every launch.
+        # This is what actually makes "start on login" work: it (re)creates the
+        # Startup shortcut if the user enabled it, or removes it if disabled,
+        # instead of relying on the Settings dialog having been saved.
+        try:
+            from tiq_assistant.desktop import autostart
+            config = store.get_schedule_config()
+            autostart.sync(config.auto_start_with_windows)
+        except Exception as e:
+            logger.warning(f"Auto-start sync failed: {e}")
+
         # Set up system tray
         self._tray_manager = TrayIconManager()
         if not self._tray_manager.setup(self._app):
@@ -87,14 +99,71 @@ class TIQDesktopApp:
         self._scheduler.start()
         logger.info("Scheduler started")
 
-        # Show startup notification
+        # Show startup notification (reflect the user's actual configured times).
+        config = store.get_schedule_config()
         self._tray_manager.show_notification(
             "TIQ Assistant Running",
-            "Time tracking is active. Popups will appear at 12:15 and 18:15.",
+            f"Time tracking is active. Popups will appear at "
+            f"{config.morning_popup_time} and {config.afternoon_popup_time}.",
         )
+
+        # Surface any recent unfilled workdays so missed days are easy to catch.
+        self._check_missed_days()
 
         # Run the application event loop
         return self._app.exec()
+
+    def _check_missed_days(self, lookback_days: int = 14) -> None:
+        """Notify the user about recent workdays with no entries.
+
+        Scans the last ``lookback_days`` days for workdays (excluding weekends,
+        full-day holidays, and skipped days) that have zero timesheet entries.
+        Clicking the notification opens the oldest such day pre-loaded for entry.
+        """
+        try:
+            from datetime import timedelta
+            from tiq_assistant.core.holidays import get_holiday_service
+
+            store = get_store()
+            holiday_service = get_holiday_service()
+            today = date.today()
+
+            missed: list[date] = []
+            for offset in range(1, lookback_days + 1):
+                day = today - timedelta(days=offset)
+
+                if not holiday_service.is_workday(day):
+                    continue
+
+                is_skipped, _ = store.is_day_skipped(day)
+                if is_skipped:
+                    continue
+
+                entries = store.get_entries(start_date=day, end_date=day)
+                if not entries:
+                    missed.append(day)
+
+            if not missed:
+                return
+
+            missed.sort()  # Oldest first.
+            self._missed_days = missed
+
+            count = len(missed)
+            oldest = missed[0].strftime("%d %b")
+            newest = missed[-1].strftime("%d %b")
+            span = oldest if count == 1 else f"{oldest} – {newest}"
+
+            if self._tray_manager:
+                self._tray_manager.show_notification(
+                    f"{count} day(s) need timesheet entries",
+                    f"Unfilled workdays: {span}. "
+                    f"Open the dashboard to fill them in.",
+                )
+            logger.info(f"Found {count} missed workday(s): {missed}")
+
+        except Exception as e:
+            logger.warning(f"Missed-day check failed: {e}")
 
     def _connect_tray_signals(self) -> None:
         """Connect tray icon signals to handlers."""
