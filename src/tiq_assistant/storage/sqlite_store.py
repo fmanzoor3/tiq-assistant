@@ -195,6 +195,13 @@ class SQLiteStore:
                 project.created_at.isoformat(),
                 project.updated_at.isoformat(),
             ))
+            # Keep the recent_projects cache in sync so a renamed project
+            # doesn't keep showing its old name in quick-select lists.
+            conn.execute("""
+                UPDATE recent_projects
+                SET project_name = ?, ticket_number = ?
+                WHERE project_id = ?
+            """, (project.name, project.ticket_number, project.id))
             conn.commit()
         return project
 
