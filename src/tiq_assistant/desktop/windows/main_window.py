@@ -246,15 +246,28 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("Existing Projects"))
 
         self._projects_table = QTableWidget()
-        self._projects_table.setColumnCount(6)
+        self._projects_table.setColumnCount(7)
         self._projects_table.setHorizontalHeaderLabels([
-            "Name", "Ticket No", "JIRA Key", "Keywords", "Location", "Actions"
+            "Name", "Ticket No", "JIRA Key", "Keywords", "Location", "Save", "Delete"
         ])
         self._projects_table.horizontalHeader().setSectionResizeMode(
             0, QHeaderView.ResizeMode.Stretch
         )
+        # Cells are edited inline; a per-row "Save" button persists the changes.
+        self._projects_table.setEditTriggers(
+            QAbstractItemView.EditTrigger.DoubleClicked
+            | QAbstractItemView.EditTrigger.EditKeyPressed
+        )
         self._style_table(self._projects_table)
         layout.addWidget(self._projects_table)
+
+        hint = QLabel(
+            "Double-click a cell to edit, then click Save on that row. "
+            "Renaming a project can also update its existing timesheet entries."
+        )
+        hint.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
 
         return widget
 
@@ -295,20 +308,110 @@ class MainWindow(QMainWindow):
         """Refresh the projects table."""
         projects = self._store.get_projects()
 
+        # Guard against edit signals firing while we repopulate.
+        self._projects_table.blockSignals(True)
         self._projects_table.setRowCount(len(projects))
         for i, project in enumerate(projects):
-            self._projects_table.setItem(i, 0, QTableWidgetItem(project.name))
+            name_item = QTableWidgetItem(project.name)
+            # Stash the project id on the row's first cell so edits can be saved.
+            name_item.setData(Qt.ItemDataRole.UserRole, project.id)
+            self._projects_table.setItem(i, 0, name_item)
             self._projects_table.setItem(i, 1, QTableWidgetItem(project.ticket_number))
-            self._projects_table.setItem(i, 2, QTableWidgetItem(project.jira_key or "-"))
+            self._projects_table.setItem(i, 2, QTableWidgetItem(project.jira_key or ""))
             self._projects_table.setItem(i, 3, QTableWidgetItem(
-                ", ".join(project.keywords) if project.keywords else "-"
+                ", ".join(project.keywords) if project.keywords else ""
             ))
             self._projects_table.setItem(i, 4, QTableWidgetItem(project.default_location))
+
+            # Save button (persists inline edits for this row)
+            save_btn = self._create_primary_button("Save")
+            save_btn.clicked.connect(lambda checked, pid=project.id: self._save_project_row(pid))
+            self._projects_table.setCellWidget(i, 5, save_btn)
 
             # Delete button
             delete_btn = self._create_danger_button("Delete")
             delete_btn.clicked.connect(lambda checked, pid=project.id: self._delete_project(pid))
-            self._projects_table.setCellWidget(i, 5, delete_btn)
+            self._projects_table.setCellWidget(i, 6, delete_btn)
+        self._projects_table.blockSignals(False)
+
+    def _find_project_row(self, project_id: str) -> int:
+        """Return the table row hosting the given project id, or -1."""
+        for row in range(self._projects_table.rowCount()):
+            item = self._projects_table.item(row, 0)
+            if item and item.data(Qt.ItemDataRole.UserRole) == project_id:
+                return row
+        return -1
+
+    def _save_project_row(self, project_id: str) -> None:
+        """Persist inline edits for a project row, and offer to update entries."""
+        row = self._find_project_row(project_id)
+        if row < 0:
+            return
+
+        project = self._store.get_project(project_id)
+        if project is None:
+            QMessageBox.warning(self, "Error", "Project no longer exists.")
+            self._refresh_projects()
+            return
+
+        def cell(col: int) -> str:
+            item = self._projects_table.item(row, col)
+            return item.text().strip() if item else ""
+
+        new_name = cell(0)
+        new_ticket = cell(1)
+        new_jira = cell(2)
+        new_keywords_text = cell(3)
+        new_location = cell(4)
+
+        if not new_name or not new_ticket:
+            QMessageBox.warning(self, "Error", "Project Name and Ticket No are required.")
+            return
+
+        old_name = project.name
+
+        # Apply edits to the model.
+        project.name = new_name
+        project.ticket_number = new_ticket
+        project.jira_key = new_jira or None
+        project.keywords = [k.strip() for k in new_keywords_text.split(",") if k.strip()]
+        project.default_location = new_location or project.default_location
+
+        self._store.save_project(project)
+
+        # If the name changed, offer to update existing timesheet entries, which
+        # store project_name as a copied string (so they don't auto-rename).
+        updated_entries = 0
+        if new_name != old_name:
+            affected = [
+                e for e in self._store.get_entries()
+                if e.project_name == old_name
+            ]
+            if affected:
+                reply = QMessageBox.question(
+                    self, "Update existing entries?",
+                    f"{len(affected)} existing timesheet entr"
+                    f"{'y' if len(affected) == 1 else 'ies'} use the old name "
+                    f"'{old_name}'.\n\nUpdate them to '{new_name}' as well?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    for e in affected:
+                        e.project_name = new_name
+                        e.ticket_number = new_ticket
+                        self._store.save_entry(e)
+                    updated_entries = len(affected)
+
+        # Refresh dependent views so the new name shows everywhere.
+        self._refresh_projects()
+        self._load_settings()   # default-project dropdown
+        self._refresh_timesheet()
+
+        msg = f"Project updated to '{new_name}'."
+        if updated_entries:
+            msg += f"\nAlso updated {updated_entries} timesheet entr" \
+                   f"{'y' if updated_entries == 1 else 'ies'}."
+        QMessageBox.information(self, "Saved", msg)
 
     def _delete_project(self, project_id: str) -> None:
         """Delete a project."""

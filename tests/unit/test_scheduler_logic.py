@@ -41,6 +41,9 @@ def _collect(scheduler):
 
 
 def test_fire_is_deduped_within_a_day(qapp, scheduler):
+    # This test targets dedup, not the working-day suppression (which has its
+    # own tests). Force suppression off so it passes on any real calendar date.
+    scheduler._should_fire_today = lambda _today: True
     fired = _collect(scheduler)
     scheduler._fire(SessionType.MORNING)
     scheduler._fire(SessionType.MORNING)  # second call must be ignored
@@ -64,6 +67,7 @@ def test_normal_weekday_fires(scheduler):
 
 
 def test_snooze_bypasses_daily_dedup(qapp, scheduler):
+    scheduler._should_fire_today = lambda _today: True  # ignore weekend/holiday
     fired = _collect(scheduler)
     # Mark afternoon as already shown today.
     scheduler._fire(SessionType.AFTERNOON)
