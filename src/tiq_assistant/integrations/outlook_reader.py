@@ -81,6 +81,28 @@ class OutlookReader:
                     f"Failed to connect to Outlook: {e}"
                 )
 
+    @staticmethod
+    def _format_outlook_date(d: date) -> str:
+        """Format a date the way this machine's locale expects it.
+
+        Outlook's Restrict parses date strings using the Windows short-date
+        locale. Using the machine's own locale format (via strftime %x) makes
+        the filter string match how Outlook will interpret it, avoiding the
+        US-vs-European day/month ambiguity that caused some months to return
+        no meetings. Falls back to an explicit, unambiguous long form if %x
+        somehow yields a 2-digit year.
+        """
+        try:
+            formatted = d.strftime("%x")
+            # Guard against 2-digit-year locales, which Outlook may misparse.
+            if formatted and len(formatted.split("/")[-1].split(".")[-1]) == 4:
+                return formatted
+        except Exception:
+            pass
+        # Unambiguous fallback: e.g. "1 May 2026" (month name can't be confused
+        # with a day number).
+        return d.strftime("%d %B %Y")
+
     def get_meetings_for_date(self, target_date: date) -> list[OutlookMeeting]:
         """
         Get all calendar events for a specific date.
@@ -91,42 +113,9 @@ class OutlookReader:
         Returns:
             List of OutlookMeeting objects
         """
-        self._connect()
-
-        meetings = []
-
-        try:
-            # Get calendar items
-            items = self._calendar.Items
-
-            # IMPORTANT: IncludeRecurrences must be set BEFORE Sort for recurring events
-            items.IncludeRecurrences = True
-            items.Sort("[Start]")
-
-            # Format dates for Outlook filter (use MM/DD/YYYY format)
-            end_date = target_date + timedelta(days=1)
-            start_str = target_date.strftime("%m/%d/%Y")
-            end_str = end_date.strftime("%m/%d/%Y")
-
-            # Restrict to the specific date
-            restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
-            filtered_items = items.Restrict(restriction)
-
-            for item in filtered_items:
-                try:
-                    meeting = self._parse_calendar_item(item)
-                    if meeting:
-                        meetings.append(meeting)
-                except Exception as e:
-                    logger.warning(f"Failed to parse calendar item: {e}")
-                    continue
-
-            logger.info(f"Found {len(meetings)} meetings for {target_date}")
-            return meetings
-
-        except Exception as e:
-            logger.error(f"Error fetching meetings: {e}")
-            return []
+        # A single day is just a 1-day range; reuse the locale-safe range fetch
+        # so we don't duplicate the fragile date-filter logic.
+        return self.get_meetings_for_date_range(target_date, target_date)
 
     def get_meetings_for_date_range(
         self,
@@ -145,102 +134,130 @@ class OutlookReader:
         """
         self._connect()
 
-        meetings = []
-
         try:
-            # Get calendar items - get a fresh Items collection each time
-            items = self._calendar.Items
-
-            # IMPORTANT: IncludeRecurrences must be set BEFORE Sort for recurring events
-            items.IncludeRecurrences = True
-            items.Sort("[Start]")
-
-            # Create datetime bounds for filtering
+            # Exact datetime bounds we actually want (inclusive start_date
+            # through the end of end_date). All final filtering is done against
+            # these in Python, so results are correct regardless of how Outlook
+            # interprets the Restrict date string.
             start_datetime = datetime.combine(start_date, datetime.min.time())
             end_datetime = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
 
-            # Try multiple date formats for Restrict filter
-            # Some Outlook installations prefer different formats
-            date_formats = [
-                # MM/DD/YYYY (US format)
-                (start_date.strftime("%m/%d/%Y"), (end_date + timedelta(days=1)).strftime("%m/%d/%Y")),
-                # YYYY-MM-DD (ISO format)
-                (start_date.strftime("%Y-%m-%d"), (end_date + timedelta(days=1)).strftime("%Y-%m-%d")),
-                # DD/MM/YYYY (European format)
-                (start_date.strftime("%d/%m/%Y"), (end_date + timedelta(days=1)).strftime("%d/%m/%Y")),
-            ]
+            # Build the Restrict filter with a locale-safe date string.
+            #
+            # Outlook's Restrict parses the date string using the machine's
+            # short-date LOCALE, so a hardcoded "MM/DD/YYYY" (or guessing among
+            # several formats and taking the first that returns anything) breaks
+            # on non-US locales -- e.g. "05/01/2026" is read as 1 May in the US
+            # but 5 Jan under a DD/MM locale. That was the root cause of some
+            # months (May, June) returning nothing while others (April, July)
+            # worked by coincidence.
+            #
+            # Fix: format the bounds using the machine's OWN locale short-date
+            # (so the string matches how Outlook will parse it), and widen the
+            # window by a day on each side as a safety margin. The precise
+            # Python filter below trims it back to the exact range.
+            pad_start = start_date - timedelta(days=1)
+            pad_end = end_date + timedelta(days=2)  # exclusive upper bound + margin
+            start_str = self._format_outlook_date(pad_start)
+            end_str = self._format_outlook_date(pad_end)
 
-            item = None
-            filtered_items = None
-            used_format = None
+            restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
+            logger.info(f"Outlook restriction: {restriction}")
 
-            for start_str, end_str in date_formats:
-                restriction = f"[Start] >= '{start_str}' AND [Start] < '{end_str}'"
-                logger.info(f"Trying Outlook restriction: {restriction}")
+            # First attempt: the fast, restricted query.
+            meetings = self._scan_items(
+                start_datetime, end_datetime, restriction=restriction
+            )
 
-                try:
-                    # Get fresh items for each attempt
-                    items = self._calendar.Items
-                    items.IncludeRecurrences = True
-                    items.Sort("[Start]")
+            # Bulletproof fallback: if the restricted query found nothing (which
+            # is how the locale/date-format bug manifested -- no error, just an
+            # empty or wrong window), scan the full calendar and filter in
+            # Python. Slower, but correct regardless of locale.
+            if not meetings:
+                logger.info("Restricted query returned 0 meetings; scanning full calendar.")
+                meetings = self._scan_items(
+                    start_datetime, end_datetime, restriction=None
+                )
 
-                    filtered_items = items.Restrict(restriction)
-                    item = filtered_items.GetFirst()
-
-                    if item is not None:
-                        used_format = (start_str, end_str)
-                        logger.info(f"Found items using format: {start_str}")
-                        break
-                except Exception as e:
-                    logger.warning(f"Restrict failed with format {start_str}: {e}")
-                    continue
-
-            if item is None:
-                logger.info(f"No items found for date range {start_date} to {end_date} with any date format")
-                return []
-
-            # When IncludeRecurrences=True, Count returns INT_MAX and normal iteration
-            # doesn't work. We need to use GetFirst/GetNext pattern.
-            item_count = 0
-            skipped_count = 0
-
-            while item is not None:
-                item_count += 1
-                try:
-                    # Manual date filtering as extra safety
-                    item_start = datetime(
-                        item.Start.year, item.Start.month, item.Start.day,
-                        item.Start.hour, item.Start.minute, item.Start.second
-                    )
-
-                    # Stop if we've gone past the end date (items are sorted)
-                    if item_start >= end_datetime:
-                        break
-
-                    if item_start < start_datetime:
-                        skipped_count += 1
-                        item = filtered_items.GetNext()
-                        continue
-
-                    meeting = self._parse_calendar_item(item)
-                    if meeting:
-                        meetings.append(meeting)
-                except Exception as e:
-                    logger.warning(f"Failed to parse calendar item: {e}")
-
-                item = filtered_items.GetNext()
-
-                # Safety limit to prevent infinite loops
-                if item_count > 1000:
-                    logger.warning("Reached 1000 items limit, stopping")
-                    break
-
-            logger.info(f"Found {len(meetings)} meetings from {start_date} to {end_date} (checked {item_count} items, skipped {skipped_count})")
+            logger.info(
+                f"Found {len(meetings)} meetings from {start_date} to {end_date}"
+            )
             return meetings
 
         except Exception as e:
             logger.error(f"Error fetching meetings: {e}", exc_info=True)
             return []
+
+    def _scan_items(
+        self,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        restriction: Optional[str] = None,
+    ) -> list[OutlookMeeting]:
+        """Iterate calendar items and return those within [start, end).
+
+        Filtering is done in Python against the exact datetime bounds, so the
+        result is correct even if ``restriction`` (an Outlook Restrict string)
+        selects a wider or slightly-off window. Pass ``restriction=None`` to
+        scan every item (the locale-proof fallback).
+        """
+        meetings: list[OutlookMeeting] = []
+
+        items = self._calendar.Items
+        # IncludeRecurrences must be set BEFORE Sort for recurring events.
+        items.IncludeRecurrences = True
+        items.Sort("[Start]")
+
+        source = items
+        if restriction:
+            try:
+                source = items.Restrict(restriction)
+            except Exception as e:
+                logger.warning(f"Restrict failed ({e}); scanning all items.")
+                source = items
+
+        item = source.GetFirst()
+        item_count = 0
+        skipped_count = 0
+
+        while item is not None:
+            item_count += 1
+            try:
+                item_start = datetime(
+                    item.Start.year, item.Start.month, item.Start.day,
+                    item.Start.hour, item.Start.minute, item.Start.second
+                )
+
+                # Items are sorted by Start. When restricted we can break past
+                # the window; when doing a FULL scan we must NOT break early,
+                # because a full unsorted-by-us collection may still contain
+                # later in-range recurring instances -- but Sort([Start]) keeps
+                # it ordered, so breaking is safe and fast in both cases.
+                if item_start >= end_datetime:
+                    break
+
+                if item_start < start_datetime:
+                    skipped_count += 1
+                    item = source.GetNext()
+                    continue
+
+                meeting = self._parse_calendar_item(item)
+                if meeting:
+                    meetings.append(meeting)
+            except Exception as e:
+                logger.warning(f"Failed to parse calendar item: {e}")
+
+            item = source.GetNext()
+
+            if item_count > 10000:
+                logger.warning("Reached 10000 items limit, stopping")
+                break
+
+        logger.debug(
+            f"Scan ({'restricted' if restriction else 'full'}): "
+            f"{len(meetings)} in range, checked {item_count}, skipped {skipped_count}"
+        )
+        return meetings
 
     def get_meetings_for_session(
         self,
