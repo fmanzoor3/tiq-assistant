@@ -841,65 +841,26 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(matching_group)
 
-        # Holidays section
+        # Holidays section — opens a dedicated, spacious manager dialog so it's
+        # not squashed into this tab.
         holidays_group = QGroupBox("Holiday Calendar")
         holidays_layout = QVBoxLayout(holidays_group)
 
-        # Instructions
         instructions = QLabel(
-            "Upload the company holiday calendar (PDF or image) to automatically "
-            "exclude national holidays from workday calculations."
+            "Manage national holidays and half-days used in workday calculations. "
+            "You can add, edit dates/types, upload a calendar file, or load defaults."
         )
         instructions.setWordWrap(True)
         instructions.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
         holidays_layout.addWidget(instructions)
 
-        # Upload button row
-        upload_layout = QHBoxLayout()
+        self._holidays_summary = QLabel("")
+        self._holidays_summary.setStyleSheet(f"color: {self.COLORS['text_secondary']};")
+        holidays_layout.addWidget(self._holidays_summary)
 
-        upload_btn = self._create_primary_button("📁 Upload Holiday File")
-        upload_btn.clicked.connect(self._upload_holiday_file)
-        upload_layout.addWidget(upload_btn)
-
-        # Year selector for default holidays
-        upload_layout.addWidget(QLabel("Year:"))
-        self._holiday_year = QSpinBox()
-        self._holiday_year.setRange(2024, 2030)
-        self._holiday_year.setValue(date.today().year)
-        upload_layout.addWidget(self._holiday_year)
-
-        load_defaults_btn = QPushButton("Load Defaults")
-        load_defaults_btn.clicked.connect(self._load_default_holidays)
-        upload_layout.addWidget(load_defaults_btn)
-
-        upload_layout.addStretch()
-        holidays_layout.addLayout(upload_layout)
-
-        # Holidays table
-        self._holidays_table = QTableWidget()
-        self._holidays_table.setColumnCount(4)
-        self._holidays_table.setHorizontalHeaderLabels([
-            "Date", "Name", "Type", "Actions"
-        ])
-        self._holidays_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )
-        self._holidays_table.setMaximumHeight(200)
-        self._style_table(self._holidays_table)
-        holidays_layout.addWidget(self._holidays_table)
-
-        # Holidays status
-        self._holidays_status = QLabel("")
-        self._holidays_status.setStyleSheet(f"color: {self.COLORS['text_secondary']};")
-        holidays_layout.addWidget(self._holidays_status)
-
-        # Clear all button
-        clear_layout = QHBoxLayout()
-        clear_layout.addStretch()
-        clear_btn = self._create_danger_button("Clear All Custom Holidays")
-        clear_btn.clicked.connect(self._clear_all_holidays)
-        clear_layout.addWidget(clear_btn)
-        holidays_layout.addLayout(clear_layout)
+        manage_btn = self._create_primary_button("📅 Manage Holiday Calendar…")
+        manage_btn.clicked.connect(self._open_holiday_manager)
+        holidays_layout.addWidget(manage_btn)
 
         layout.addWidget(holidays_group)
 
@@ -963,165 +924,29 @@ class MainWindow(QMainWindow):
 
     # ==================== HOLIDAY MANAGEMENT ====================
 
-    def _upload_holiday_file(self) -> None:
-        """Upload and process a holiday calendar file."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Holiday Calendar",
-            "",
-            "All Supported Files (*.pdf *.jpg *.jpeg *.png);;PDF Files (*.pdf);;Images (*.jpg *.jpeg *.png)"
-        )
+    def _open_holiday_manager(self) -> None:
+        """Open the dedicated holiday calendar manager dialog."""
+        from tiq_assistant.desktop.windows.holiday_dialog import HolidayDialog
 
-        if not file_path:
-            return
+        dialog = HolidayDialog(parent=self)
+        dialog.exec()
 
-        from tiq_assistant.services.holiday_parser import parse_holiday_file
+        # Holidays may have changed -> refresh dependent views.
+        get_holiday_service().reload_from_database()
+        self._refresh_holidays_summary()
+        self._refresh_timesheet()
 
-        year = self._holiday_year.value()
-        result = parse_holiday_file(Path(file_path), year)
-
-        if result.errors:
-            # Show errors but continue if we have holidays
-            error_msg = "\n".join(result.errors)
-            if not result.holidays:
-                QMessageBox.warning(
-                    self, "Parse Error",
-                    f"Could not extract holidays from file:\n{error_msg}"
-                )
-                return
-
-        # Save holidays to database
-        if result.holidays:
-            holidays_tuples = [
-                (h[0], h[1], h[2]) for h in result.holidays
-            ]
-            count = self._store.save_holidays_batch(holidays_tuples, result.source_file)
-
-            # Reload holiday service
-            holiday_service = get_holiday_service()
-            holiday_service.reload_from_database()
-
-            # Refresh display
-            self._refresh_holidays_table()
-
-            if result.errors:
-                QMessageBox.information(
-                    self, "Holidays Loaded",
-                    f"Loaded {count} holidays from {result.source_file}.\n\n"
-                    f"Note: {result.errors[0]}"
-                )
-            else:
-                QMessageBox.information(
-                    self, "Holidays Loaded",
-                    f"Loaded {count} holidays from {result.source_file}."
-                )
-
-    def _load_default_holidays(self) -> None:
-        """Load default holidays for the selected year."""
-        from tiq_assistant.services.holiday_parser import get_default_holidays_for_year
-
-        year = self._holiday_year.value()
-        holidays = get_default_holidays_for_year(year)
-
-        if not holidays:
-            QMessageBox.warning(
-                self, "No Defaults",
-                f"No default holidays available for {year}. "
-                "Please upload a holiday calendar file."
-            )
-            return
-
-        # Save to database
-        count = self._store.save_holidays_batch(holidays, f"defaults_{year}")
-
-        # Reload holiday service
-        holiday_service = get_holiday_service()
-        holiday_service.reload_from_database()
-
-        # Refresh display
-        self._refresh_holidays_table()
-
-        QMessageBox.information(
-            self, "Defaults Loaded",
-            f"Loaded {count} default holidays for {year}."
-        )
-
-    def _refresh_holidays_table(self) -> None:
-        """Refresh the holidays table with current data."""
+    def _refresh_holidays_summary(self) -> None:
+        """Update the one-line holiday summary shown on the Settings tab."""
         holidays = self._store.get_holidays()
-
-        self._holidays_table.setRowCount(len(holidays))
-
-        for i, holiday in enumerate(holidays):
-            # Date
-            date_str = holiday['holiday_date'].strftime("%d.%m.%Y")
-            self._holidays_table.setItem(i, 0, QTableWidgetItem(date_str))
-
-            # Name
-            self._holidays_table.setItem(i, 1, QTableWidgetItem(holiday['name']))
-
-            # Type
-            holiday_type = "Half Day" if holiday['holiday_type'] == 'half_day' else "Full Day"
-            type_item = QTableWidgetItem(holiday_type)
-            self._holidays_table.setItem(i, 2, type_item)
-
-            # Delete button
-            delete_btn = self._create_danger_button("Delete")
-            delete_btn.clicked.connect(
-                lambda checked, hid=holiday['id']: self._delete_holiday(hid)
+        full = sum(1 for h in holidays if h["holiday_type"] == "full_day")
+        half = sum(1 for h in holidays if h["holiday_type"] == "half_day")
+        if holidays:
+            self._holidays_summary.setText(
+                f"{len(holidays)} holidays configured ({full} full-day, {half} half-day)."
             )
-            self._holidays_table.setCellWidget(i, 3, delete_btn)
-
-            # Color half-day rows with yellow tint
-            if holiday['holiday_type'] == 'half_day':
-                self._set_row_background(self._holidays_table, i, self.COLORS['warning_light'])
-
-        # Update status
-        full_day_count = len([h for h in holidays if h['holiday_type'] == 'full_day'])
-        half_day_count = len([h for h in holidays if h['holiday_type'] == 'half_day'])
-        self._holidays_status.setText(
-            f"Total: {len(holidays)} holidays ({full_day_count} full days, {half_day_count} half days)"
-        )
-
-    def _delete_holiday(self, holiday_id: int) -> None:
-        """Delete a single holiday."""
-        reply = QMessageBox.question(
-            self, "Confirm Delete",
-            "Are you sure you want to delete this holiday?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            self._store.delete_holiday(holiday_id)
-
-            # Reload holiday service
-            holiday_service = get_holiday_service()
-            holiday_service.reload_from_database()
-
-            self._refresh_holidays_table()
-
-    def _clear_all_holidays(self) -> None:
-        """Clear all custom holidays from the database."""
-        reply = QMessageBox.question(
-            self, "Confirm Clear",
-            "Are you sure you want to clear all custom holidays?\n"
-            "This will revert to the built-in default holidays.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            count = self._store.clear_all_holidays()
-
-            # Reload holiday service
-            holiday_service = get_holiday_service()
-            holiday_service.reload_from_database()
-
-            self._refresh_holidays_table()
-
-            QMessageBox.information(
-                self, "Cleared",
-                f"Cleared {count} custom holidays."
-            )
+        else:
+            self._holidays_summary.setText("No custom holidays configured (using built-in defaults).")
 
     # ==================== HELPERS ====================
 
@@ -1236,4 +1061,4 @@ class MainWindow(QMainWindow):
         self._refresh_timesheet()
         self._refresh_projects()
         self._load_settings()
-        self._refresh_holidays_table()
+        self._refresh_holidays_summary()

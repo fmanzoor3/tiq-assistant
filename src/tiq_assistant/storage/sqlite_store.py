@@ -703,6 +703,65 @@ class SQLiteStore:
             ))
             conn.commit()
 
+    def update_holiday(
+        self,
+        holiday_id: int,
+        holiday_date: date,
+        name: str,
+        holiday_type: str,
+    ) -> None:
+        """Update an existing holiday by id.
+
+        Raises StorageError if the new date collides with a different holiday
+        (holiday_date is UNIQUE).
+        """
+        with self._get_connection() as conn:
+            clash = conn.execute(
+                "SELECT id FROM holidays WHERE holiday_date = ? AND id != ?",
+                (holiday_date.isoformat(), holiday_id),
+            ).fetchone()
+            if clash:
+                raise StorageError(
+                    f"Another holiday already exists on {holiday_date.isoformat()}."
+                )
+            conn.execute(
+                """
+                UPDATE holidays
+                SET holiday_date = ?, name = ?, holiday_type = ?
+                WHERE id = ?
+                """,
+                (holiday_date.isoformat(), name, holiday_type, holiday_id),
+            )
+            conn.commit()
+
+    def add_holiday(
+        self,
+        holiday_date: date,
+        name: str,
+        holiday_type: str = "full_day",
+    ) -> None:
+        """Add a single holiday manually.
+
+        Raises StorageError if a holiday already exists on that date.
+        """
+        with self._get_connection() as conn:
+            existing = conn.execute(
+                "SELECT id FROM holidays WHERE holiday_date = ?",
+                (holiday_date.isoformat(),),
+            ).fetchone()
+            if existing:
+                raise StorageError(
+                    f"A holiday already exists on {holiday_date.isoformat()}."
+                )
+            conn.execute(
+                """
+                INSERT INTO holidays (holiday_date, name, holiday_type, source_file, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (holiday_date.isoformat(), name, holiday_type, "manual", datetime.now().isoformat()),
+            )
+            conn.commit()
+
     def save_holidays_batch(self, holidays: list[tuple[date, str, str]], source_file: str = None) -> int:
         """Save multiple holidays at once. Returns count of saved holidays."""
         now = datetime.now().isoformat()
