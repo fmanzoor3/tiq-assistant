@@ -234,7 +234,8 @@ class VoiceEntryDialog(QDialog):
                 if wav is None:
                     self._voice_status.setText("No audio captured.")
                     return
-                text = speech.transcribe(wav)
+                cfg = load_llm_config(self._store)
+                text = speech.transcribe(wav, model_ref=cfg.whisper_model or "base")
                 # Append (don't clobber) so multiple takes accumulate.
                 existing = self._transcript.toPlainText().strip()
                 self._transcript.setPlainText((existing + " " + text).strip() if existing else text)

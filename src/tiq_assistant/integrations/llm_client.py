@@ -41,6 +41,9 @@ class LLMConfig:
     model: str = ""            # empty => auto-detect via /models
     verify_ssl: bool = False   # internal self-signed cert
     timeout_seconds: int = 60
+    # Speech-to-text model: a size name ("base") that downloads from the Hub,
+    # or a local folder path for offline use on locked-down machines.
+    whisper_model: str = "base"
 
 
 class LLMClient:

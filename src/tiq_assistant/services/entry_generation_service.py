@@ -340,6 +340,7 @@ def load_llm_config(store: Optional[SQLiteStore] = None) -> LLMConfig:
         model=get("llm_model", ""),
         verify_ssl=(get("llm_verify_ssl", "0") == "1"),
         timeout_seconds=int(get("llm_timeout", "60") or "60"),
+        whisper_model=get("whisper_model", "base") or "base",
     )
 
 
@@ -352,6 +353,7 @@ def save_llm_config(config: LLMConfig, store: Optional[SQLiteStore] = None) -> N
     put("llm_model", config.model)
     put("llm_verify_ssl", "1" if config.verify_ssl else "0")
     put("llm_timeout", str(config.timeout_seconds))
+    put("whisper_model", config.whisper_model)
 
 
 def get_entry_generation_service() -> EntryGenerationService:

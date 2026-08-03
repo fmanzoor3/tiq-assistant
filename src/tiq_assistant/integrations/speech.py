@@ -89,14 +89,63 @@ class AudioRecorder:
 _model_cache = {}
 
 
-def transcribe(wav_path: Path, model_size: str = DEFAULT_MODEL_SIZE, language: Optional[str] = None) -> str:
-    """Transcribe a WAV file to text using faster-whisper (CPU int8)."""
+class ModelUnavailableError(Exception):
+    """Raised when the whisper model can't be loaded (e.g. download blocked)."""
+
+
+def _looks_like_path(model_ref: str) -> bool:
+    """True if model_ref points at a local folder rather than a Hub name."""
+    try:
+        return Path(model_ref).exists()
+    except Exception:
+        return False
+
+
+def transcribe(
+    wav_path: Path,
+    model_ref: str = DEFAULT_MODEL_SIZE,
+    language: Optional[str] = None,
+) -> str:
+    """Transcribe a WAV file using faster-whisper (CPU int8).
+
+    ``model_ref`` may be either a model size name ("base", "small", ...) which
+    faster-whisper downloads from the Hugging Face Hub on first use, OR a path
+    to a local model folder, which loads fully offline (no network). On locked-
+    down machines where the Hub download is blocked (WinError 10013), point
+    ``model_ref`` at a pre-downloaded model folder via Settings.
+    """
+    import os
+
+    is_local = _looks_like_path(model_ref)
+
+    if is_local:
+        # Loading a local folder: force offline mode so no download is attempted.
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    else:
+        # Downloading from the Hub on a corporate network: disable the
+        # accelerated "xet" transfer path, which opens a socket that some
+        # firewalls forbid (WinError 10013). This forces plain HTTPS downloads
+        # that go through the normal proxy -- slower, but far more likely to work.
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+        os.environ.setdefault("HF_XET_DISABLE", "1")
+
     from faster_whisper import WhisperModel
 
-    if model_size not in _model_cache:
-        # int8 on CPU is a good speed/quality tradeoff for short clips.
-        _model_cache[model_size] = WhisperModel(model_size, device="cpu", compute_type="int8")
-    model = _model_cache[model_size]
+    if model_ref not in _model_cache:
+        try:
+            _model_cache[model_ref] = WhisperModel(
+                model_ref, device="cpu", compute_type="int8"
+            )
+        except Exception as e:  # noqa: BLE001
+            # Most commonly: Hub download blocked by corporate firewall.
+            raise ModelUnavailableError(
+                "Could not load the speech model. If this machine blocks "
+                "internet downloads, download a faster-whisper model on another "
+                "machine and set its folder path in Settings > AI Assistant "
+                f"(Whisper model path).\n\nDetails: {e}"
+            )
+    model = _model_cache[model_ref]
 
     segments, _info = model.transcribe(str(wav_path), language=language)
     return " ".join(seg.text.strip() for seg in segments).strip()

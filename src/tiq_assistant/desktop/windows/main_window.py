@@ -879,6 +879,19 @@ class MainWindow(QMainWindow):
         )
         ai_layout.addRow("", self._ai_verify_ssl)
 
+        # Whisper (speech-to-text) model: a size name that downloads, or a local
+        # folder path for machines that block the Hugging Face download.
+        whisper_row = QHBoxLayout()
+        self._ai_whisper = QLineEdit()
+        self._ai_whisper.setPlaceholderText('"base" (downloads) or a local model folder path')
+        whisper_row.addWidget(self._ai_whisper, 1)
+        browse_whisper = QPushButton("Browse…")
+        browse_whisper.clicked.connect(self._browse_whisper_model)
+        whisper_row.addWidget(browse_whisper)
+        whisper_widget = QWidget()
+        whisper_widget.setLayout(whisper_row)
+        ai_layout.addRow("Whisper model:", whisper_widget)
+
         test_btn = QPushButton("Test connection")
         test_btn.clicked.connect(self._test_llm_connection)
         ai_layout.addRow("", test_btn)
@@ -971,6 +984,7 @@ class MainWindow(QMainWindow):
         self._ai_base_url.setText(cfg.base_url)
         self._ai_model.setText(cfg.model)
         self._ai_verify_ssl.setChecked(cfg.verify_ssl)
+        self._ai_whisper.setText(cfg.whisper_model)
 
     def _save_settings(self) -> None:
         """Save settings."""
@@ -997,9 +1011,18 @@ class MainWindow(QMainWindow):
         cfg.base_url = self._ai_base_url.text().strip() or cfg.base_url
         cfg.model = self._ai_model.text().strip()
         cfg.verify_ssl = self._ai_verify_ssl.isChecked()
+        cfg.whisper_model = self._ai_whisper.text().strip() or "base"
         save_llm_config(cfg, self._store)
 
         QMessageBox.information(self, "Saved", "Settings saved!")
+
+    def _browse_whisper_model(self) -> None:
+        """Pick a local folder containing a downloaded faster-whisper model."""
+        folder = QFileDialog.getExistingDirectory(
+            self, "Select local Whisper model folder", ""
+        )
+        if folder:
+            self._ai_whisper.setText(folder)
 
     def _test_llm_connection(self) -> None:
         """Test the configured LLM endpoint and report the resolved model."""
