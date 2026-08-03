@@ -807,6 +807,38 @@ class SQLiteStore:
             conn.commit()
         return count
 
+    def has_any_holidays(self) -> bool:
+        """Return True if the holidays table has at least one row."""
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT 1 FROM holidays LIMIT 1").fetchone()
+            return row is not None
+
+    def seed_default_holidays_if_empty(self) -> int:
+        """Seed built-in default holidays into the DB, but ONLY if it's empty.
+
+        Idempotent and safe: if any holidays already exist (custom or previously
+        seeded), this does nothing -- so it never re-adds a holiday the user has
+        deleted, and never overwrites edits. Never touches timesheet entries.
+
+        Returns the number of holidays seeded (0 if the table was non-empty).
+        """
+        if self.has_any_holidays():
+            return 0
+
+        # Seed the current and next year's defaults so the timesheet has data
+        # to work with out of the box.
+        from datetime import date as _date
+        from tiq_assistant.services.holiday_parser import get_default_holidays_for_year
+
+        years = {_date.today().year, _date.today().year + 1}
+        seeded: list[tuple] = []
+        for y in years:
+            seeded.extend(get_default_holidays_for_year(y))
+
+        if not seeded:
+            return 0
+        return self.save_holidays_batch(seeded, source_file="seed_defaults")
+
     def get_holidays(self, year: int = None) -> list[dict]:
         """Get all holidays, optionally filtered by year."""
         with self._get_connection() as conn:

@@ -110,39 +110,38 @@ class HolidayService:
             use_database: If True, also loads custom holidays from the database.
         """
         if holidays is not None:
+            # Explicit list provided (e.g. tests) -- use it verbatim.
             self._holidays = holidays
+        elif use_database:
+            # The DATABASE is the single source of truth. On first use it is
+            # seeded with the built-in defaults (only if empty), after which the
+            # user's edits/deletes/adds in the manager fully control which days
+            # are holidays -- deleting a default half-day now correctly makes it
+            # a normal 8h workday.
+            self._holidays = self._load_db_holidays(seed_if_empty=True)
         else:
-            # Start with default holidays
+            # DB explicitly disabled and no list given -- fall back to built-ins.
             self._holidays = list(HOLIDAYS_2026)
-
-            # Load and merge database holidays if enabled
-            if use_database:
-                try:
-                    db_holidays = _load_holidays_from_database()
-                    # Database holidays override defaults for the same date
-                    db_dates = {h.date for h in db_holidays}
-                    # Keep defaults that aren't overridden
-                    self._holidays = [h for h in self._holidays if h.date not in db_dates]
-                    # Add all database holidays
-                    self._holidays.extend(db_holidays)
-                except Exception:
-                    # If database loading fails, continue with defaults
-                    pass
 
         # Build lookup dict for fast access
         self._holiday_map: dict[date, Holiday] = {h.date: h for h in self._holidays}
 
-    def reload_from_database(self) -> None:
-        """Reload holidays from database (call after uploading new holidays)."""
-        # Rebuild with fresh database data
-        self._holidays = list(HOLIDAYS_2026)
+    @staticmethod
+    def _load_db_holidays(seed_if_empty: bool = False) -> list[Holiday]:
+        """Load holidays from the database, seeding defaults once if empty."""
         try:
-            db_holidays = _load_holidays_from_database()
-            db_dates = {h.date for h in db_holidays}
-            self._holidays = [h for h in self._holidays if h.date not in db_dates]
-            self._holidays.extend(db_holidays)
+            if seed_if_empty:
+                from tiq_assistant.storage.sqlite_store import get_store
+                get_store().seed_default_holidays_if_empty()
+            return _load_holidays_from_database()
         except Exception:
-            pass
+            # If the DB is unavailable, fall back to built-ins so the app still
+            # excludes obvious holidays rather than treating them as workdays.
+            return list(HOLIDAYS_2026)
+
+    def reload_from_database(self) -> None:
+        """Reload holidays from the database (call after any change)."""
+        self._holidays = self._load_db_holidays(seed_if_empty=False)
         self._holiday_map = {h.date: h for h in self._holidays}
 
     def is_holiday(self, check_date: date) -> bool:
