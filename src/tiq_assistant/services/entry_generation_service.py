@@ -116,12 +116,86 @@ Examples of the user's past descriptions (mimic this tone and length):
 
 Return ONLY the JSON object."""
 
-    def _build_user_prompt(self, transcript: str, remaining_hours: int) -> str:
-        return (
-            f"Remaining target hours to fill today: {remaining_hours}.\n\n"
-            f"My spoken summary of the day:\n\"\"\"\n{transcript.strip()}\n\"\"\"\n\n"
-            f"Produce the JSON entries now."
+    def _build_user_prompt(
+        self,
+        transcript: str,
+        remaining_hours: int,
+        target_date: date,
+        existing_entries: Optional[list] = None,
+        meetings: Optional[list] = None,
+        recent_context: Optional[list] = None,
+    ) -> str:
+        parts = [
+            f"Date being logged: {target_date.strftime('%A, %d %B %Y')}.",
+            f"Remaining target hours to fill for this day: {remaining_hours}.",
+        ]
+
+        if existing_entries:
+            lines = "\n".join(
+                f"  - {e.hours}h [{e.project_name or 'no project'}] {e.description}"
+                for e in existing_entries
+            )
+            parts.append(
+                "Entries ALREADY logged for this day (do NOT duplicate these; "
+                "only fill the remaining hours):\n" + lines
+            )
+
+        if meetings:
+            lines = "\n".join(
+                f"  - {m.display_time} {m.subject} ({m.display_duration})"
+                for m in meetings
+            )
+            parts.append(
+                "Meetings on this day (already being added separately; you may "
+                "reference them but do not re-create meeting entries):\n" + lines
+            )
+
+        if recent_context:
+            lines = "\n".join(
+                f"  - {d.strftime('%d %b')}: [{name or 'no project'}] {desc}"
+                for (d, name, desc) in recent_context
+            )
+            parts.append(
+                "For context, my entries over the previous few days (to keep "
+                "phrasing and ongoing tasks consistent):\n" + lines
+            )
+
+        parts.append(
+            f"My spoken summary of what I did on this day:\n"
+            f"\"\"\"\n{transcript.strip()}\n\"\"\"\n"
         )
+        parts.append("Produce the JSON entries now.")
+        return "\n\n".join(parts)
+
+    def gather_day_context(self, target_date: date, recent_days: int = 5) -> dict:
+        """Collect context for gap-filling a given day.
+
+        Returns dict with: existing_entries, meetings, recent_context
+        (list of (date, project_name, description) from the previous N days).
+        """
+        from datetime import timedelta
+
+        existing = self.store.get_entries(start_date=target_date, end_date=target_date)
+
+        try:
+            meetings = self.store.get_meetings_for_date(target_date)
+        except Exception:
+            meetings = []
+
+        recent: list = []
+        start = target_date - timedelta(days=recent_days)
+        end = target_date - timedelta(days=1)
+        if end >= start:
+            for e in self.store.get_entries(start_date=start, end_date=end):
+                recent.append((e.entry_date, e.project_name, e.description))
+        # Keep the context compact.
+        recent = recent[-15:]
+
+        return {
+            "existing_entries": existing,
+            "meetings": meetings,
+            "recent_context": recent,
+        }
 
     # -------------------------------------------------------------- generate
 
@@ -131,8 +205,15 @@ Return ONLY the JSON object."""
         target_date: date,
         remaining_hours: int,
         settings: Optional[UserSettings] = None,
+        existing_entries: Optional[list] = None,
+        meetings: Optional[list] = None,
+        recent_context: Optional[list] = None,
     ) -> GenerationResult:
-        """Call the LLM and return proposed entries (unsaved)."""
+        """Call the LLM and return proposed entries (unsaved).
+
+        Optional context (existing entries, meetings, recent-days entries) helps
+        the model fill only the gap and match ongoing phrasing.
+        """
         if not transcript or not transcript.strip():
             raise LLMError("Nothing was said or typed to generate entries from.")
 
@@ -141,7 +222,12 @@ Return ONLY the JSON object."""
         llm = self._llm or self._make_llm()
 
         system = self._build_system_prompt(projects, settings)
-        user = self._build_user_prompt(transcript, max(1, remaining_hours))
+        user = self._build_user_prompt(
+            transcript, max(1, remaining_hours), target_date,
+            existing_entries=existing_entries,
+            meetings=meetings,
+            recent_context=recent_context,
+        )
 
         raw = llm.chat(
             messages=[

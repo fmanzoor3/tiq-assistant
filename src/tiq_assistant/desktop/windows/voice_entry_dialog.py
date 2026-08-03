@@ -34,16 +34,22 @@ class _GenWorker(QObject):
     done = pyqtSignal(object)   # GenerationResult
     failed = pyqtSignal(str)
 
-    def __init__(self, transcript, target_date, remaining):
+    def __init__(self, transcript, target_date, remaining, context=None):
         super().__init__()
         self._transcript = transcript
         self._target_date = target_date
         self._remaining = remaining
+        self._context = context or {}
 
     def run(self):
         try:
             svc = EntryGenerationService()
-            result = svc.generate(self._transcript, self._target_date, self._remaining)
+            result = svc.generate(
+                self._transcript, self._target_date, self._remaining,
+                existing_entries=self._context.get("existing_entries"),
+                meetings=self._context.get("meetings"),
+                recent_context=self._context.get("recent_context"),
+            )
             self.done.emit(result)
         except LLMError as e:
             self.failed.emit(str(e))
@@ -260,9 +266,18 @@ class VoiceEntryDialog(QDialog):
         self._generate_btn.setEnabled(False)
         self._gen_status.setText("Thinking… contacting the local LLM.")
 
+        # Gather day context (existing entries, meetings, recent days) so the
+        # LLM fills only the gap and matches ongoing phrasing.
+        try:
+            context = EntryGenerationService(store=self._store).gather_day_context(
+                self._target_date
+            )
+        except Exception:
+            context = {}
+
         # Run generation off the UI thread.
         self._thread = QThread()
-        self._worker = _GenWorker(transcript, self._target_date, self._remaining)
+        self._worker = _GenWorker(transcript, self._target_date, self._remaining, context)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
         self._worker.done.connect(self._on_generated)

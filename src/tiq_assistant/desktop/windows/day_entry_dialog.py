@@ -459,6 +459,22 @@ class DayEntryDialog(QDialog):
         autofill_btn.clicked.connect(self._auto_fill_day)
         btn_layout.addWidget(autofill_btn)
 
+        # Describe this day with voice/AI (fills the gap for THIS date).
+        describe_btn = QPushButton("🎤 Describe this day")
+        describe_btn.setToolTip(
+            "Speak or type what you did on this day; the AI drafts entries "
+            "to fill the remaining hours, aware of what's already logged."
+        )
+        describe_btn.setStyleSheet(f"""
+            background-color: {self.COLORS['primary']};
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-weight: bold;
+        """)
+        describe_btn.clicked.connect(self._describe_day)
+        btn_layout.addWidget(describe_btn)
+
         # Snooze button (only for scheduled popups)
         if self._session != SessionType.FULL_DAY:
             snooze_btn = QPushButton("Remind in 15 min")
@@ -721,6 +737,41 @@ class DayEntryDialog(QDialog):
             self._store.update_recent_project(project)
 
         self._description_edit.clear()
+        self._refresh_entries()
+
+    def _describe_day(self) -> None:
+        """Open the voice/AI dialog to fill this day's remaining hours."""
+        from tiq_assistant.services.entry_generation_service import load_llm_config
+
+        if not load_llm_config(self._store).enabled:
+            QMessageBox.information(
+                self, "AI assistant disabled",
+                "Enable the AI assistant in Settings (and set the endpoint) to "
+                "describe your day by voice or text."
+            )
+            return
+
+        remaining = self._get_remaining_hours()
+        if remaining <= 0:
+            reply = QMessageBox.question(
+                self, "Day already full",
+                "This day already meets its target hours. Describe it anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            remaining = self._target_hours
+
+        from tiq_assistant.desktop.windows.voice_entry_dialog import VoiceEntryDialog
+
+        dialog = VoiceEntryDialog(
+            target_date=self._target_date,
+            remaining_hours=remaining,
+            parent=self,
+        )
+        dialog.exec()
+
+        # Reflect any newly-saved entries.
         self._refresh_entries()
 
     def _auto_fill_day(self) -> None:

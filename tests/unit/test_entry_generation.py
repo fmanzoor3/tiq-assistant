@@ -99,3 +99,49 @@ def test_hours_are_integers_min_one(store):
     res = _svc(store, payload).generate("...", date(2026, 8, 3), 3)
     assert res.entries[0].hours == 1     # 0 -> min 1
     assert res.entries[1].hours == 3     # 2.6 -> rounded
+
+
+def test_day_context_is_included_in_prompt(store):
+    """Existing entries, meetings and recent days should reach the LLM prompt."""
+    from datetime import timedelta
+    from tiq_assistant.core.models import (
+        TimesheetEntry, ActivityCode, EntryStatus, EntrySource,
+    )
+
+    target = date(2026, 5, 20)
+    store.save_entry(TimesheetEntry(
+        consultant_id="F", entry_date=target, hours=3, project_name="Agentbot",
+        ticket_number="2019135", activity_code=ActivityCode.GLST, location="ANKARA",
+        description="Agentbot: triage", status=EntryStatus.DRAFT, source=EntrySource.MANUAL,
+    ))
+    store.save_entry(TimesheetEntry(
+        consultant_id="F", entry_date=target - timedelta(days=1), hours=8,
+        project_name="Agentbot", ticket_number="2019135", activity_code=ActivityCode.GLST,
+        location="ANKARA", description="Agentbot: feature work",
+        status=EntryStatus.DRAFT, source=EntrySource.MANUAL,
+    ))
+
+    svc = EntryGenerationService(store=store)
+    ctx = svc.gather_day_context(target)
+    assert len(ctx["existing_entries"]) == 1
+    assert len(ctx["recent_context"]) == 1
+
+    fake = _FakeLLM('{"entries":[{"project":"Agentbot","hours":5,"description":"Agentbot: more work"}]}')
+    svc2 = EntryGenerationService(store=store, llm=fake)
+    svc2.generate(
+        "did more work", target, 5,
+        existing_entries=ctx["existing_entries"],
+        meetings=ctx["meetings"],
+        recent_context=ctx["recent_context"],
+    )
+    # The user prompt (2nd message) is built by generate(); confirm it carried context.
+    # _FakeLLM stores the system prompt; rebuild user prompt to assert structure.
+    user_prompt = svc2._build_user_prompt(
+        "did more work", 5, target,
+        existing_entries=ctx["existing_entries"],
+        meetings=ctx["meetings"],
+        recent_context=ctx["recent_context"],
+    )
+    assert "ALREADY logged" in user_prompt
+    assert "previous few days" in user_prompt
+    assert "20 May 2026" in user_prompt
