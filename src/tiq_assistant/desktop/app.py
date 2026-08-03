@@ -176,6 +176,7 @@ class TIQDesktopApp:
         self._tray_manager.afternoon_entry_requested.connect(
             lambda: self._show_time_entry_popup(SessionType.AFTERNOON)
         )
+        self._tray_manager.voice_entry_requested.connect(self._show_voice_entry)
         self._tray_manager.sync_requested.connect(self._sync_outlook)
         self._tray_manager.settings_requested.connect(self._show_settings)
         self._tray_manager.dashboard_requested.connect(self._show_dashboard)
@@ -193,6 +194,76 @@ class TIQDesktopApp:
             lambda: self._show_time_entry_popup(SessionType.AFTERNOON, from_schedule=True)
         )
 
+    def _ai_enabled(self) -> bool:
+        """Whether the AI assistant is turned on in settings."""
+        try:
+            from tiq_assistant.services.entry_generation_service import load_llm_config
+            return load_llm_config(get_store()).enabled
+        except Exception:
+            return False
+
+    def _show_voice_entry(self) -> None:
+        """Open the end-of-day 'What did you do today?' voice/AI dialog.
+
+        Auto-pulls today's meetings into the timesheet first, then opens the
+        voice dialog to fill the remaining hours from a spoken/typed summary.
+        """
+        from tiq_assistant.desktop.windows.voice_entry_dialog import VoiceEntryDialog
+        from tiq_assistant.services.hour_suggestion_service import get_hour_suggestion_service
+        from tiq_assistant.core.models import SessionType as CoreSession
+
+        today = date.today()
+
+        # Auto-add today's meetings as entries (so they're captured alongside).
+        try:
+            self._auto_add_todays_meetings(today)
+        except Exception as e:
+            logger.warning(f"Could not auto-add meetings: {e}")
+
+        # Work out how many hours still need filling for the day.
+        store = get_store()
+        config = store.get_schedule_config()
+        target = config.morning_hours_target + config.afternoon_hours_target
+        entries = store.get_entries(start_date=today, end_date=today)
+        filled = sum(e.hours for e in entries)
+        remaining = max(1, target - filled)
+
+        dialog = VoiceEntryDialog(target_date=today, remaining_hours=remaining)
+        dialog.exec()
+
+    def _auto_add_todays_meetings(self, day: date) -> None:
+        """Save today's un-imported Outlook meetings as draft entries."""
+        meetings = self._get_today_meetings()
+        if not meetings:
+            return
+        store = get_store()
+        settings = store.get_settings()
+        from tiq_assistant.core.models import (
+            TimesheetEntry, ActivityCode, EntryStatus, EntrySource,
+        )
+        existing = store.get_entries(start_date=day, end_date=day)
+        existing_event_ids = {e.source_event_id for e in existing if e.source_event_id}
+
+        for m in meetings:
+            if m.id in existing_event_ids:
+                continue
+            project = store.get_project(m.matched_project_id) if m.matched_project_id else None
+            entry = TimesheetEntry(
+                consultant_id=settings.consultant_id,
+                entry_date=day,
+                hours=max(1, round(float(m.duration_hours))),
+                ticket_number=project.ticket_number if project else None,
+                project_name=project.name if project else None,
+                activity_code=settings.meeting_activity_code,
+                location=settings.default_location,
+                description=m.subject,
+                status=EntryStatus.DRAFT,
+                source=EntrySource.CALENDAR,
+                source_event_id=m.id,
+                source_jira_key=m.matched_jira_key,
+            )
+            store.save_entry(entry)
+
     def _show_time_entry_popup(
         self,
         session: SessionType,
@@ -200,6 +271,13 @@ class TIQDesktopApp:
     ) -> None:
         """Show the time entry popup for the given session."""
         logger.info(f"Showing {session.value} time entry popup")
+
+        # End-of-day (afternoon) popup uses the voice/AI dialog when enabled.
+        if session == SessionType.AFTERNOON and self._ai_enabled():
+            if from_schedule and self._tray_manager:
+                self._tray_manager.show_popup_reminder(session)
+            self._show_voice_entry()
+            return
 
         # Close existing popup if any
         if self._current_popup is not None:

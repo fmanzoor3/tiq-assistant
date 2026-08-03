@@ -149,6 +149,12 @@ class SQLiteStore:
                     created_at TEXT NOT NULL
                 );
 
+                -- Generic key/value app config (e.g. LLM/AI settings)
+                CREATE TABLE IF NOT EXISTS app_config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+
                 -- Indexes
                 CREATE INDEX IF NOT EXISTS idx_entries_date ON timesheet_entries(entry_date);
                 CREATE INDEX IF NOT EXISTS idx_entries_status ON timesheet_entries(status);
@@ -506,6 +512,27 @@ class SQLiteStore:
                 config.workday_end,
                 1 if config.auto_start_with_windows else 0,
             ))
+            conn.commit()
+
+    # ==================== Generic app config (key/value) ====================
+
+    def get_config_value(self, key: str, default: str = "") -> str:
+        """Get a value from the key/value app_config table."""
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT value FROM app_config WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None or row["value"] is None:
+                return default
+            return row["value"]
+
+    def set_config_value(self, key: str, value: str) -> None:
+        """Set a value in the key/value app_config table."""
+        with self._get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO app_config (key, value) VALUES (?, ?)",
+                (key, value),
+            )
             conn.commit()
 
     # ==================== Recent Projects ====================

@@ -1,0 +1,379 @@
+"""End-of-day "What did you do today?" dialog.
+
+Flow: speak (or type) a summary of the day -> transcribe locally -> the local
+LLM turns it into draft entries -> review them in an editable table -> confirm
+to save. Meetings for the day are auto-pulled and shown alongside.
+
+Voice is optional (faster-whisper + sounddevice); the text box always works.
+The LLM call runs on a worker thread so the UI stays responsive.
+"""
+
+from datetime import date
+from typing import Optional
+
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit,
+    QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QSpinBox,
+    QGroupBox, QWidget, QAbstractItemView, QMessageBox,
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
+
+from tiq_assistant.core.models import (
+    TimesheetEntry, ActivityCode, EntryStatus, EntrySource,
+)
+from tiq_assistant.storage.sqlite_store import get_store
+from tiq_assistant.services.entry_generation_service import (
+    EntryGenerationService, load_llm_config,
+)
+from tiq_assistant.integrations.llm_client import LLMError
+from tiq_assistant.desktop.icon import create_app_icon
+
+
+class _GenWorker(QObject):
+    """Runs the LLM generation off the UI thread."""
+    done = pyqtSignal(object)   # GenerationResult
+    failed = pyqtSignal(str)
+
+    def __init__(self, transcript, target_date, remaining):
+        super().__init__()
+        self._transcript = transcript
+        self._target_date = target_date
+        self._remaining = remaining
+
+    def run(self):
+        try:
+            svc = EntryGenerationService()
+            result = svc.generate(self._transcript, self._target_date, self._remaining)
+            self.done.emit(result)
+        except LLMError as e:
+            self.failed.emit(str(e))
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(f"Unexpected error: {e}")
+
+
+class VoiceEntryDialog(QDialog):
+    COLORS = {
+        'primary': '#0078D4', 'success': '#107C10', 'danger': '#D13438',
+        'warning': '#FFB900', 'gray': '#E1E1E1', 'gray_light': '#F5F5F5',
+        'text': '#323130', 'text_secondary': '#605E5C',
+    }
+    MAX_ENTRY_HOURS = 12
+
+    def __init__(self, target_date: date, remaining_hours: int, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._store = get_store()
+        self._target_date = target_date
+        self._remaining = max(1, remaining_hours)
+        self._projects = self._store.get_projects()
+        self._settings = self._store.get_settings()
+
+        self._recorder = None
+        self._recording = False
+        self._thread = None
+        self._worker = None
+        self._saved_count = 0
+
+        self._setup_ui()
+
+    # --------------------------------------------------------------- UI
+
+    def _setup_ui(self) -> None:
+        self.setWindowTitle("What did you do today?")
+        self.setWindowIcon(create_app_icon())
+        self.setModal(True)
+        self.setMinimumSize(820, 680)
+        self.resize(1000, 780)
+        self.setStyleSheet(f"""
+            QDialog {{ background-color: white; color: {self.COLORS['text']}; }}
+            QLabel {{ color: {self.COLORS['text']}; }}
+            QGroupBox {{ font-weight: bold; border: 1px solid {self.COLORS['gray']};
+                border-radius: 4px; margin-top: 12px; padding-top: 10px; }}
+            QGroupBox::title {{ subcontrol-origin: margin; left: 10px; padding: 0 5px; }}
+            QTextEdit, QComboBox, QSpinBox {{
+                color: {self.COLORS['text']}; background-color: white;
+                border: 1px solid {self.COLORS['gray']}; border-radius: 4px; padding: 6px;
+            }}
+            QComboBox QAbstractItemView {{ background: white; color: {self.COLORS['text']};
+                selection-background-color: {self.COLORS['primary']}; selection-color: white; }}
+            QTableWidget {{ border: 1px solid {self.COLORS['gray']};
+                gridline-color: {self.COLORS['gray']}; background: white; color: {self.COLORS['text']}; }}
+            QHeaderView::section {{ background: {self.COLORS['gray_light']}; padding: 6px;
+                border: none; border-right: 1px solid {self.COLORS['gray']};
+                border-bottom: 1px solid {self.COLORS['gray']}; font-weight: bold; }}
+            QPushButton {{ padding: 8px 14px; border: 1px solid {self.COLORS['gray']};
+                border-radius: 4px; background: white; color: {self.COLORS['text']}; }}
+            QPushButton:hover {{ background: {self.COLORS['gray_light']}; }}
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(18, 18, 18, 18)
+
+        title = QLabel(f"<h2>What did you do today?</h2>")
+        layout.addWidget(title)
+        sub = QLabel(
+            f"{self._target_date.strftime('%A, %d %B %Y')} — "
+            f"{self._remaining}h left to fill. "
+            f"Speak or type what you worked on; I'll draft the entries."
+        )
+        sub.setStyleSheet(f"color: {self.COLORS['text_secondary']};")
+        sub.setWordWrap(True)
+        layout.addWidget(sub)
+
+        # Voice controls
+        voice_row = QHBoxLayout()
+        self._record_btn = QPushButton("🎤 Start recording")
+        self._record_btn.clicked.connect(self._toggle_record)
+        voice_row.addWidget(self._record_btn)
+        self._voice_status = QLabel("")
+        self._voice_status.setStyleSheet(f"color: {self.COLORS['text_secondary']};")
+        voice_row.addWidget(self._voice_status)
+        voice_row.addStretch()
+        layout.addLayout(voice_row)
+
+        # Transcript box
+        layout.addWidget(QLabel("Your summary (editable):"))
+        self._transcript = QTextEdit()
+        self._transcript.setPlaceholderText(
+            "e.g. I worked on 3 tasks today, all under the default project. "
+            "Agentbot feedback for a few hours, then optimization testing..."
+        )
+        self._transcript.setMinimumHeight(120)
+        layout.addWidget(self._transcript)
+
+        # Generate button
+        gen_row = QHBoxLayout()
+        self._generate_btn = QPushButton("✨ Generate entries")
+        self._generate_btn.setStyleSheet(
+            f"background: {self.COLORS['primary']}; color: white; border: none; "
+            f"padding: 10px 18px; font-weight: bold;")
+        self._generate_btn.clicked.connect(self._generate)
+        gen_row.addWidget(self._generate_btn)
+        self._gen_status = QLabel("")
+        self._gen_status.setStyleSheet(f"color: {self.COLORS['text_secondary']};")
+        gen_row.addWidget(self._gen_status)
+        gen_row.addStretch()
+        layout.addLayout(gen_row)
+
+        # Proposed entries table
+        group = QGroupBox("Proposed entries (edit before saving)")
+        gl = QVBoxLayout(group)
+        self._table = QTableWidget()
+        self._table.setColumnCount(4)
+        self._table.setHorizontalHeaderLabels(["Project", "Hours", "Description", ""])
+        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._table.setColumnWidth(1, 70)
+        self._table.setColumnWidth(3, 40)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        gl.addWidget(self._table)
+
+        add_row = QHBoxLayout()
+        add_line_btn = QPushButton("+ Add line")
+        add_line_btn.clicked.connect(lambda: self._add_row(None, 1, ""))
+        add_row.addWidget(add_line_btn)
+        add_row.addStretch()
+        self._total_label = QLabel("")
+        add_row.addWidget(self._total_label)
+        gl.addLayout(add_row)
+        layout.addWidget(group, 1)
+
+        # Bottom buttons
+        btns = QHBoxLayout()
+        btns.addStretch()
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        btns.addWidget(cancel)
+        self._save_btn = QPushButton("Save entries")
+        self._save_btn.setStyleSheet(
+            f"background: {self.COLORS['success']}; color: white; border: none; "
+            f"padding: 10px 20px; font-weight: bold;")
+        self._save_btn.clicked.connect(self._save)
+        btns.addWidget(self._save_btn)
+        layout.addLayout(btns)
+
+        self._update_total()
+
+    # ------------------------------------------------------------ voice
+
+    def _toggle_record(self) -> None:
+        from tiq_assistant.integrations import speech
+
+        if not self._recording:
+            available, reason = speech.is_available()
+            if not available:
+                QMessageBox.information(
+                    self, "Voice not available",
+                    f"Voice input isn't available on this machine, so please type "
+                    f"your summary instead.\n\nDetails: {reason}"
+                )
+                return
+            try:
+                self._recorder = speech.AudioRecorder()
+                self._recorder.start()
+            except Exception as e:  # noqa: BLE001
+                QMessageBox.warning(self, "Microphone error", f"Could not start recording: {e}")
+                return
+            self._recording = True
+            self._record_btn.setText("⏹ Stop & transcribe")
+            self._voice_status.setText("Recording… speak now.")
+        else:
+            self._recording = False
+            self._record_btn.setText("🎤 Start recording")
+            self._voice_status.setText("Transcribing…")
+            self._record_btn.setEnabled(False)
+            self.repaint()
+            try:
+                wav = self._recorder.stop()
+                if wav is None:
+                    self._voice_status.setText("No audio captured.")
+                    return
+                text = speech.transcribe(wav)
+                # Append (don't clobber) so multiple takes accumulate.
+                existing = self._transcript.toPlainText().strip()
+                self._transcript.setPlainText((existing + " " + text).strip() if existing else text)
+                self._voice_status.setText("Transcribed. Review/edit, then Generate.")
+            except Exception as e:  # noqa: BLE001
+                self._voice_status.setText("")
+                QMessageBox.warning(self, "Transcription error", str(e))
+            finally:
+                self._record_btn.setEnabled(True)
+
+    # --------------------------------------------------------- generate
+
+    def _generate(self) -> None:
+        transcript = self._transcript.toPlainText().strip()
+        if not transcript:
+            QMessageBox.information(self, "Nothing to generate",
+                                    "Please speak or type what you did today first.")
+            return
+
+        cfg = load_llm_config(self._store)
+        if not cfg.enabled:
+            QMessageBox.information(
+                self, "AI assistant disabled",
+                "Enable the AI assistant in Settings (and set the endpoint) to "
+                "generate entries from your summary."
+            )
+            return
+
+        self._generate_btn.setEnabled(False)
+        self._gen_status.setText("Thinking… contacting the local LLM.")
+
+        # Run generation off the UI thread.
+        self._thread = QThread()
+        self._worker = _GenWorker(transcript, self._target_date, self._remaining)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.done.connect(self._on_generated)
+        self._worker.failed.connect(self._on_gen_failed)
+        self._worker.done.connect(self._thread.quit)
+        self._worker.failed.connect(self._thread.quit)
+        self._thread.start()
+
+    def _on_generated(self, result) -> None:
+        self._generate_btn.setEnabled(True)
+        self._table.setRowCount(0)
+        for e in result.entries:
+            self._add_row(e.project_id, e.hours, e.description)
+        self._gen_status.setText(f"Drafted {len(result.entries)} entries. Review and save.")
+        self._update_total()
+
+    def _on_gen_failed(self, message: str) -> None:
+        self._generate_btn.setEnabled(True)
+        self._gen_status.setText("")
+        QMessageBox.warning(self, "Could not generate entries", message)
+
+    # ------------------------------------------------------------- table
+
+    def _add_row(self, project_id, hours: int, description: str) -> None:
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+
+        project_combo = QComboBox()
+        project_combo.addItem("-- None --", None)
+        sel = 0
+        for i, p in enumerate(self._projects):
+            project_combo.addItem(p.name, p.id)
+            if project_id and p.id == project_id:
+                sel = i + 1
+        project_combo.setCurrentIndex(sel)
+        self._table.setCellWidget(row, 0, project_combo)
+
+        hours_spin = QSpinBox()
+        hours_spin.setRange(1, self.MAX_ENTRY_HOURS)
+        hours_spin.setValue(max(1, min(hours, self.MAX_ENTRY_HOURS)))
+        hours_spin.valueChanged.connect(self._update_total)
+        self._table.setCellWidget(row, 1, hours_spin)
+
+        self._table.setItem(row, 2, QTableWidgetItem(description))
+
+        remove = QPushButton("✕")
+        remove.clicked.connect(lambda _c, w=remove: self._remove_row(w))
+        self._table.setCellWidget(row, 3, remove)
+
+        self._update_total()
+
+    def _remove_row(self, button) -> None:
+        for row in range(self._table.rowCount()):
+            if self._table.cellWidget(row, 3) is button:
+                self._table.removeRow(row)
+                break
+        self._update_total()
+
+    def _update_total(self) -> None:
+        total = sum(
+            self._table.cellWidget(r, 1).value()
+            for r in range(self._table.rowCount())
+            if self._table.cellWidget(r, 1)
+        )
+        color = self.COLORS['success'] if total == self._remaining else self.COLORS['text_secondary']
+        self._total_label.setText(
+            f"<span style='color:{color}; font-weight:bold;'>Total {total} / {self._remaining}h</span>"
+        )
+
+    # -------------------------------------------------------------- save
+
+    def _save(self) -> None:
+        if self._table.rowCount() == 0:
+            QMessageBox.information(self, "Nothing to save", "There are no entries to save.")
+            return
+
+        saved = 0
+        for row in range(self._table.rowCount()):
+            project_combo = self._table.cellWidget(row, 0)
+            hours_spin = self._table.cellWidget(row, 1)
+            desc_item = self._table.item(row, 2)
+
+            description = (desc_item.text().strip() if desc_item else "")
+            if not description:
+                QMessageBox.warning(self, "Description required",
+                                    f"Line {row + 1} needs a description.")
+                return
+
+            project_id = project_combo.currentData()
+            project = self._store.get_project(project_id) if project_id else None
+
+            entry = TimesheetEntry(
+                consultant_id=self._settings.consultant_id,
+                entry_date=self._target_date,
+                hours=hours_spin.value(),
+                ticket_number=project.ticket_number if project else None,
+                project_name=project.name if project else None,
+                activity_code=self._settings.default_activity_code,
+                location=self._settings.default_location,
+                description=description,
+                status=EntryStatus.DRAFT,
+                source=EntrySource.MANUAL,
+            )
+            self._store.save_entry(entry)
+            if project:
+                self._store.update_recent_project(project)
+            saved += 1
+
+        self._saved_count = saved
+        QMessageBox.information(self, "Saved", f"Saved {saved} entries.")
+        self.accept()
+
+    def get_saved_count(self) -> int:
+        return self._saved_count

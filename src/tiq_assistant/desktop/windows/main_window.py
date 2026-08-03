@@ -841,6 +841,44 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(matching_group)
 
+        # AI assistant (local LLM) — OFF by default. When enabled, the app can
+        # contact the configured internal LLM endpoint to draft entries from a
+        # spoken/typed summary. This is the only feature that makes a network
+        # call, hence the explicit opt-in.
+        ai_group = QGroupBox("AI Assistant (local LLM) — optional")
+        ai_layout = QFormLayout(ai_group)
+
+        self._ai_enabled = QCheckBox("Enable voice / AI entry drafting")
+        ai_layout.addRow("", self._ai_enabled)
+
+        self._ai_base_url = QLineEdit()
+        self._ai_base_url.setPlaceholderText("https://.../v1")
+        ai_layout.addRow("Endpoint URL:", self._ai_base_url)
+
+        self._ai_model = QLineEdit()
+        self._ai_model.setPlaceholderText("(leave blank to auto-detect)")
+        ai_layout.addRow("Model:", self._ai_model)
+
+        self._ai_verify_ssl = QCheckBox("Verify SSL certificate")
+        self._ai_verify_ssl.setToolTip(
+            "Internal servers often use a self-signed cert; leave unchecked if so."
+        )
+        ai_layout.addRow("", self._ai_verify_ssl)
+
+        test_btn = QPushButton("Test connection")
+        test_btn.clicked.connect(self._test_llm_connection)
+        ai_layout.addRow("", test_btn)
+
+        note = QLabel(
+            "When enabled, the app contacts the endpoint above to draft entries. "
+            "It stays fully offline when disabled."
+        )
+        note.setWordWrap(True)
+        note.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
+        ai_layout.addRow("", note)
+
+        layout.addWidget(ai_group)
+
         # Holidays section — opens a dedicated, spacious manager dialog so it's
         # not squashed into this tab.
         holidays_group = QGroupBox("Holiday Calendar")
@@ -905,6 +943,14 @@ class MainWindow(QMainWindow):
         self._skip_canceled.setChecked(settings.skip_canceled_meetings)
         self._min_duration.setValue(settings.min_meeting_duration_minutes)
 
+        # AI assistant config
+        from tiq_assistant.services.entry_generation_service import load_llm_config
+        cfg = load_llm_config(self._store)
+        self._ai_enabled.setChecked(cfg.enabled)
+        self._ai_base_url.setText(cfg.base_url)
+        self._ai_model.setText(cfg.model)
+        self._ai_verify_ssl.setChecked(cfg.verify_ssl)
+
     def _save_settings(self) -> None:
         """Save settings."""
         from tiq_assistant.core.models import UserSettings
@@ -920,7 +966,45 @@ class MainWindow(QMainWindow):
         )
 
         self._store.save_settings(settings)
+
+        # Persist AI assistant config.
+        from tiq_assistant.services.entry_generation_service import (
+            load_llm_config, save_llm_config,
+        )
+        cfg = load_llm_config(self._store)
+        cfg.enabled = self._ai_enabled.isChecked()
+        cfg.base_url = self._ai_base_url.text().strip() or cfg.base_url
+        cfg.model = self._ai_model.text().strip()
+        cfg.verify_ssl = self._ai_verify_ssl.isChecked()
+        save_llm_config(cfg, self._store)
+
         QMessageBox.information(self, "Saved", "Settings saved!")
+
+    def _test_llm_connection(self) -> None:
+        """Test the configured LLM endpoint and report the resolved model."""
+        from tiq_assistant.integrations.llm_client import LLMClient, LLMConfig, LLMError
+
+        cfg = LLMConfig(
+            enabled=True,
+            base_url=self._ai_base_url.text().strip(),
+            model=self._ai_model.text().strip(),
+            verify_ssl=self._ai_verify_ssl.isChecked(),
+        )
+        if not cfg.base_url:
+            QMessageBox.warning(self, "No endpoint", "Enter the endpoint URL first.")
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            model = LLMClient(cfg).test_connection()
+            QMessageBox.information(
+                self, "Connection OK",
+                f"Connected successfully.\nModel: {model}"
+            )
+        except LLMError as e:
+            QMessageBox.warning(self, "Connection failed", str(e))
+        finally:
+            QApplication.restoreOverrideCursor()
 
     # ==================== HOLIDAY MANAGEMENT ====================
 

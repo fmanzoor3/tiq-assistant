@@ -9,3 +9,11 @@ python-dateutil>=2.8.0
 PyQt6>=6.5.0
 APScheduler>=3.10.0
 pywin32>=306
+
+# --- Optional: voice input for the AI end-of-day assistant ---
+# The app runs without these; voice simply falls back to typing. Install to
+# enable local, offline speech-to-text. The LLM client itself uses only the
+# standard library (no openai/httpx needed).
+# faster-whisper>=1.0.0
+# sounddevice>=0.4.6
+# numpy>=1.24.0

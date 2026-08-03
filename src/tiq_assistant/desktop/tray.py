@@ -26,6 +26,7 @@ class TrayIconManager(QObject):
 
     morning_entry_requested = pyqtSignal()
     afternoon_entry_requested = pyqtSignal()
+    voice_entry_requested = pyqtSignal()
     sync_requested = pyqtSignal()
     settings_requested = pyqtSignal()
     dashboard_requested = pyqtSignal()
@@ -119,6 +120,11 @@ class TrayIconManager(QObject):
         afternoon_action = QAction("Afternoon Entry (18:15)", menu)
         afternoon_action.triggered.connect(self.afternoon_entry_requested.emit)
         menu.addAction(afternoon_action)
+
+        # Voice / AI end-of-day entry
+        voice_action = QAction("🎤 Log My Day (Voice)", menu)
+        voice_action.triggered.connect(self.voice_entry_requested.emit)
+        menu.addAction(voice_action)
 
         menu.addSeparator()
 
