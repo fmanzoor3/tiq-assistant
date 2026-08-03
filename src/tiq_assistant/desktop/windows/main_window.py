@@ -8,7 +8,8 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QLineEdit, QSpinBox, QComboBox, QFormLayout, QGroupBox,
-    QMessageBox, QFileDialog, QCheckBox, QAbstractItemView, QApplication
+    QMessageBox, QFileDialog, QCheckBox, QAbstractItemView, QApplication,
+    QScrollArea
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QBrush
@@ -206,6 +207,13 @@ class MainWindow(QMainWindow):
             QFrame {{
                 background-color: white;
                 color: {self.COLORS['text']};
+            }}
+            QScrollArea {{
+                background-color: white;
+                border: none;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background-color: white;
             }}
         """)
 
@@ -790,9 +798,15 @@ class MainWindow(QMainWindow):
     # ==================== SETTINGS TAB ====================
 
     def _create_settings_tab(self) -> QWidget:
-        """Create the settings tab."""
+        """Create the settings tab.
+
+        The tab has grown several sections (User, Activity, Matching, AI, Holiday)
+        so its content is placed inside a scroll area -- otherwise the lower
+        sections get cut off on smaller windows.
+        """
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.setSpacing(14)
 
         # User settings
         user_group = QGroupBox("User Settings")
@@ -909,7 +923,14 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        return widget
+        # Wrap the content in a scroll area so every section is reachable even
+        # on smaller windows.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(widget)
+        return scroll
 
     def _load_settings(self) -> None:
         """Load settings into the form."""
