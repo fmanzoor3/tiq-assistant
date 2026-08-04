@@ -62,15 +62,18 @@ class _TranscribeWorker(QObject):
     done = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, wav_path, model_ref):
+    def __init__(self, wav_path, model_ref, vocabulary=None):
         super().__init__()
         self._wav = wav_path
         self._model_ref = model_ref
+        self._vocabulary = vocabulary
 
     def run(self):
         try:
             from tiq_assistant.integrations import speech
-            text = speech.transcribe(self._wav, model_ref=self._model_ref)
+            text = speech.transcribe(
+                self._wav, model_ref=self._model_ref, vocabulary=self._vocabulary
+            )
             self.done.emit(text)
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
@@ -188,11 +191,18 @@ class VoiceEntryDialog(QDialog):
         self._table = QTableWidget()
         self._table.setColumnCount(4)
         self._table.setHorizontalHeaderLabels(["Project", "Hours", "Description", ""])
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self._table.setColumnWidth(1, 70)
-        self._table.setColumnWidth(3, 40)
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self._table.setColumnWidth(0, 230)   # Project: wide enough for full name
+        self._table.setColumnWidth(1, 80)    # Hours
+        self._table.setColumnWidth(3, 48)    # Remove button
         self._table.verticalHeader().setVisible(False)
+        self._table.verticalHeader().setDefaultSectionSize(40)  # taller rows
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setWordWrap(True)
         gl.addWidget(self._table)
 
         add_row = QHBoxLayout()
@@ -266,7 +276,9 @@ class VoiceEntryDialog(QDialog):
             )
             cfg = load_llm_config(self._store)
             self._tx_thread = QThread()
-            self._tx_worker = _TranscribeWorker(wav, cfg.whisper_model or "base")
+            self._tx_worker = _TranscribeWorker(
+                wav, cfg.whisper_model or "base", vocabulary=self._build_vocabulary()
+            )
             self._tx_worker.moveToThread(self._tx_thread)
             self._tx_thread.started.connect(self._tx_worker.run)
             self._tx_worker.done.connect(self._on_transcribed)
@@ -274,6 +286,22 @@ class VoiceEntryDialog(QDialog):
             self._tx_worker.done.connect(self._tx_thread.quit)
             self._tx_worker.failed.connect(self._tx_thread.quit)
             self._tx_thread.start()
+
+    def _build_vocabulary(self) -> str:
+        """Domain terms (project names + keywords) to bias transcription."""
+        terms: list[str] = []
+        for p in self._projects:
+            terms.append(p.name)
+            terms.extend(p.keywords or [])
+        # De-dup while preserving order; keep it reasonably short.
+        seen = set()
+        uniq = []
+        for t in terms:
+            t = (t or "").strip()
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                uniq.append(t)
+        return ", ".join(uniq[:40])
 
     def _on_transcribed(self, text: str) -> None:
         # Append (don't clobber) so multiple takes accumulate.

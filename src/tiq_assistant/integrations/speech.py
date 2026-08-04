@@ -105,6 +105,7 @@ def transcribe(
     wav_path: Path,
     model_ref: str = DEFAULT_MODEL_SIZE,
     language: Optional[str] = None,
+    vocabulary: Optional[str] = None,
 ) -> str:
     """Transcribe a WAV file using faster-whisper (CPU int8).
 
@@ -113,6 +114,10 @@ def transcribe(
     to a local model folder, which loads fully offline (no network). On locked-
     down machines where the Hub download is blocked (WinError 10013), point
     ``model_ref`` at a pre-downloaded model folder via Settings.
+
+    ``vocabulary`` is an optional space-separated list of domain terms (project
+    names, product names like "EnGPT") fed to the model as an initial prompt so
+    it recognises them instead of guessing phonetically.
     """
     import os
 
@@ -147,5 +152,16 @@ def transcribe(
             )
     model = _model_cache[model_ref]
 
-    segments, _info = model.transcribe(str(wav_path), language=language)
+    # Seed recognition with domain vocabulary so terms like "EnGPT" aren't
+    # mangled into "NGPT". initial_prompt biases the decoder toward these words.
+    initial_prompt = None
+    if vocabulary:
+        initial_prompt = (
+            "The following are project and product names that may be mentioned: "
+            + vocabulary
+        )
+
+    segments, _info = model.transcribe(
+        str(wav_path), language=language, initial_prompt=initial_prompt
+    )
     return " ".join(seg.text.strip() for seg in segments).strip()

@@ -78,6 +78,11 @@ class EntryGenerationService:
 
         default_name = self._default_project_name(projects, settings)
 
+        known_terms = self._collect_known_terms(projects)
+        known_terms_block = (
+            "\n".join(f"  - {t}" for t in known_terms) if known_terms else "  (none yet)"
+        )
+
         return f"""You convert a person's spoken summary of their workday into timesheet entries.
 
 You MUST return ONLY a JSON object of this exact shape, nothing else:
@@ -96,6 +101,16 @@ The DEFAULT project is "{default_name}". Use it when:
   - the user does not name a specific project, OR
   - the user says the work was "under the default project" / "support", OR
   - the work is support for another area but booked under the default project.
+
+TRANSCRIPTION CORRECTION (important -- the summary came from speech-to-text):
+  - The text may contain mis-heard product/project names. Correct them to the
+    KNOWN TERMS below (and the project list) when clearly intended.
+    e.g. "NGPT"/"and GPT" -> "EnGPT"; "rag deep"/"RAG-Deep" -> "RAGDeep";
+    fix spacing/hyphenation to match the known spelling.
+  - Only correct when confident it's the same term; don't invent names.
+
+KNOWN TERMS (correct spellings of products/areas the user works on):
+{known_terms_block}
 
 DESCRIPTION rules (match the user's style exactly):
   - One short sentence, usually fewer than 10 words. Task-focused, not verbose.
@@ -282,6 +297,39 @@ Return ONLY the JSON object."""
         return out
 
     # -------------------------------------------------------------- helpers
+
+    def _collect_known_terms(self, projects: list[Project]) -> list[str]:
+        """Gather correct spellings of products/areas the user works on.
+
+        Sources: project names, project keywords, and the "Area:" prefixes the
+        user has used in past descriptions (e.g. "Agentbot", "EnGPT", "RAGDeep").
+        These become the LLM's correction targets for mis-heard speech.
+        """
+        terms: list[str] = []
+        for p in projects:
+            terms.append(p.name)
+            terms.extend(p.keywords or [])
+
+        # Prefixes from history: text before the first colon in past descriptions.
+        try:
+            for desc in self.store.get_description_history(limit=100):
+                if ":" in desc:
+                    prefix = desc.split(":", 1)[0].strip()
+                    # Only short, name-like prefixes (avoid whole sentences).
+                    if prefix and len(prefix) <= 30 and len(prefix.split()) <= 4:
+                        terms.append(prefix)
+        except Exception:
+            pass
+
+        # De-duplicate case-insensitively, preserve first-seen spelling.
+        seen = set()
+        uniq = []
+        for t in terms:
+            t = (t or "").strip()
+            if t and t.lower() not in seen:
+                seen.add(t.lower())
+                uniq.append(t)
+        return uniq[:50]
 
     def _default_project(
         self, projects: list[Project], settings: UserSettings
