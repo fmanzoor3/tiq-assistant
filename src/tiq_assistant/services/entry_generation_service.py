@@ -254,6 +254,9 @@ Return ONLY the JSON object."""
             ],
             temperature=0.0,
             json_mode=True,
+            # Entries are short; cap output so the model can't ramble and slow
+            # the response. A day's worth of entries fits comfortably in this.
+            max_tokens=800,
         )
 
         parsed = self._parse_json(raw)
@@ -398,7 +401,8 @@ def load_llm_config(store: Optional[SQLiteStore] = None) -> LLMConfig:
         api_key=get("llm_api_key", LLMConfig.api_key),
         model=get("llm_model", ""),
         verify_ssl=(get("llm_verify_ssl", "0") == "1"),
-        timeout_seconds=int(get("llm_timeout", "60") or "60"),
+        timeout_seconds=int(get("llm_timeout", "120") or "120"),
+        disable_thinking=(get("llm_disable_thinking", "1") == "1"),
         whisper_model=get("whisper_model", "base") or "base",
         custom_terms=get("custom_terms", ""),
     )
@@ -413,6 +417,7 @@ def save_llm_config(config: LLMConfig, store: Optional[SQLiteStore] = None) -> N
     put("llm_model", config.model)
     put("llm_verify_ssl", "1" if config.verify_ssl else "0")
     put("llm_timeout", str(config.timeout_seconds))
+    put("llm_disable_thinking", "1" if config.disable_thinking else "0")
     put("whisper_model", config.whisper_model)
     put("custom_terms", config.custom_terms)
 
