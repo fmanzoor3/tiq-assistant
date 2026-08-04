@@ -143,6 +143,9 @@ class LLMClient:
         json_mode: bool = False,
     ) -> str:
         """Run a chat completion and return the assistant message content."""
+        # Copy messages so any in-place tweaks (e.g. /no_think) don't mutate the
+        # caller's list, which is reused across retries.
+        messages = [dict(m) for m in messages]
         payload: dict = {
             "model": model or self.resolve_model(),
             "messages": messages,
@@ -164,17 +167,26 @@ class LLMClient:
             payload["enable_thinking"] = False
             extra_body = payload.setdefault("extra_body", {})
             extra_body["enable_thinking"] = False
+            # Qwen also honours a "/no_think" directive in the message text; add
+            # it to the last user message as a belt-and-suspenders switch that
+            # works even when the API param is ignored.
+            msgs = payload["messages"]
+            for m in reversed(msgs):
+                if m.get("role") == "user":
+                    if "/no_think" not in (m.get("content") or ""):
+                        m["content"] = "/no_think\n" + (m.get("content") or "")
+                    break
 
         result = self._post("/chat/completions", payload)
 
         import logging as _logging
-        _logging.getLogger(__name__).debug("LLM raw response: %s", result)
+        _logging.getLogger(__name__).info("LLM raw response: %s", result)
 
         try:
             choice = result["choices"][0]
             message = choice.get("message", {})
         except (KeyError, IndexError, TypeError):
-            raise LLMError("LLM response had no choices.")
+            raise LLMError(f"LLM response had no choices. Raw: {json.dumps(result)[:400]}")
 
         content = message.get("content") or ""
         finish_reason = choice.get("finish_reason")
@@ -189,12 +201,18 @@ class LLMClient:
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
 
         if not content:
+            # Surface the diagnostic detail so the cause is visible.
+            usage = result.get("usage") or {}
+            detail = (
+                f"finish_reason={finish_reason}, usage={usage}, "
+                f"message_keys={list(message.keys())}"
+            )
             if finish_reason == "length":
                 raise LLMError(
-                    "The model ran out of output space before answering (likely "
-                    "spent it all on reasoning). Try again, or turn off 'thinking' "
-                    "/ raise the token limit in Settings."
+                    "The model used all its output tokens on hidden reasoning and "
+                    "returned no answer. Enable '/no_think' handling or use a "
+                    f"smaller/faster model.\n\n[{detail}]"
                 )
-            raise LLMError("The model returned an empty response.")
+            raise LLMError(f"The model returned an empty response.\n\n[{detail}]")
 
         return content
