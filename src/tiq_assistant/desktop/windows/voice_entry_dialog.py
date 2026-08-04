@@ -14,7 +14,7 @@ from typing import Optional
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit,
     QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QSpinBox,
-    QGroupBox, QWidget, QAbstractItemView, QMessageBox,
+    QGroupBox, QWidget, QAbstractItemView, QMessageBox, QScrollArea,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
 
@@ -111,10 +111,29 @@ class VoiceEntryDialog(QDialog):
         self.setWindowTitle("What did you do today?")
         self.setWindowIcon(create_app_icon())
         self.setModal(True)
-        self.setMinimumSize(820, 680)
-        self.resize(1000, 780)
+
+        # Allow the window to be maximised/minimised (dialogs lack these by
+        # default) and to shrink to fit small laptop screens.
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowType.WindowMaximizeButtonHint
+            | Qt.WindowType.WindowMinimizeButtonHint
+        )
+        self.setMinimumSize(600, 400)
+
+        # Open at a size that fits the current screen (with margin for taskbar),
+        # capped at a comfortable maximum.
+        try:
+            avail = self.screen().availableGeometry()
+            w = min(1000, int(avail.width() * 0.9))
+            h = min(780, int(avail.height() * 0.9))
+            self.resize(w, h)
+        except Exception:
+            self.resize(900, 650)
         self.setStyleSheet(f"""
             QDialog {{ background-color: white; color: {self.COLORS['text']}; }}
+            QScrollArea {{ background-color: white; border: none; }}
+            QScrollArea > QWidget > QWidget {{ background-color: white; }}
             QLabel {{ color: {self.COLORS['text']}; }}
             QGroupBox {{ font-weight: bold; border: 1px solid {self.COLORS['gray']};
                 border-radius: 4px; margin-top: 12px; padding-top: 10px; }}
@@ -135,7 +154,21 @@ class VoiceEntryDialog(QDialog):
             QPushButton:hover {{ background: {self.COLORS['gray_light']}; }}
         """)
 
-        layout = QVBoxLayout(self)
+        # Outer layout on the dialog: [ scrollable content ] + [ pinned buttons ].
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer.addWidget(scroll, 1)
+
+        content = QWidget()
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
         layout.setSpacing(12)
         layout.setContentsMargins(18, 18, 18, 18)
 
@@ -215,8 +248,11 @@ class VoiceEntryDialog(QDialog):
         gl.addLayout(add_row)
         layout.addWidget(group, 1)
 
-        # Bottom buttons
-        btns = QHBoxLayout()
+        # Bottom buttons -- pinned OUTSIDE the scroll area so Save/Cancel are
+        # always visible even on a short screen.
+        button_bar = QWidget()
+        btns = QHBoxLayout(button_bar)
+        btns.setContentsMargins(18, 10, 18, 12)
         btns.addStretch()
         cancel = QPushButton("Cancel")
         cancel.clicked.connect(self.reject)
@@ -227,7 +263,7 @@ class VoiceEntryDialog(QDialog):
             f"padding: 10px 20px; font-weight: bold;")
         self._save_btn.clicked.connect(self._save)
         btns.addWidget(self._save_btn)
-        layout.addLayout(btns)
+        outer.addWidget(button_bar)
 
         self._update_total()
 
