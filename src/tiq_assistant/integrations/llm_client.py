@@ -191,11 +191,15 @@ class LLMClient:
         content = message.get("content") or ""
         finish_reason = choice.get("finish_reason")
 
-        # Some Qwen/vLLM setups (thinking mode) put the answer -- or, when the
-        # token budget is exhausted mid-reasoning, ONLY the reasoning -- in a
-        # separate field. Fall back to it if content is empty.
+        # Some Qwen/vLLM setups (thinking mode) put the answer in a separate
+        # field instead of "content" -- observed field names include
+        # "reasoning_content" and "reasoning". Fall back to whichever has text.
         if not content.strip():
-            content = message.get("reasoning_content") or ""
+            for alt in ("reasoning_content", "reasoning"):
+                alt_val = message.get(alt)
+                if alt_val and str(alt_val).strip():
+                    content = str(alt_val)
+                    break
 
         import re
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
