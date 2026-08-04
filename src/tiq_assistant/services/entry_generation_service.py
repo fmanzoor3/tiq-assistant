@@ -247,11 +247,13 @@ Return ONLY the JSON object."""
             recent_context=recent_context,
         )
 
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+
         raw = llm.chat(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
+            messages=messages,
             temperature=0.0,
             json_mode=True,
             # Entries are short; cap output so the model can't ramble and slow
@@ -259,7 +261,25 @@ Return ONLY the JSON object."""
             max_tokens=800,
         )
 
-        parsed = self._parse_json(raw)
+        try:
+            parsed = self._parse_json(raw)
+        except LLMError:
+            # Retry once without JSON mode (some servers don't honour it), with a
+            # blunt instruction to emit only the JSON object.
+            retry_messages = messages + [
+                {"role": "assistant", "content": raw},
+                {"role": "user", "content":
+                    'Return ONLY the JSON object {"entries":[...]} with no other '
+                    'text, no markdown fences, and no reasoning.'},
+            ]
+            raw = llm.chat(
+                messages=retry_messages,
+                temperature=0.0,
+                json_mode=False,
+                max_tokens=800,
+            )
+            parsed = self._parse_json(raw)
+
         entries = self._to_generated_entries(parsed, projects, settings)
         return GenerationResult(entries=entries, raw_response=raw)
 
@@ -366,21 +386,58 @@ Return ONLY the JSON object."""
 
     @staticmethod
     def _parse_json(raw: str) -> dict:
-        """Extract the JSON object from the model output, tolerating extra text."""
-        raw = raw.strip()
-        # Strip ```json fences if present.
-        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE | re.MULTILINE)
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            # Fall back to the first {...} block.
-            match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
+        """Extract entries JSON from model output, tolerating many shapes.
+
+        Handles: plain JSON object, ```json fenced blocks, a leading <think>
+        reasoning block, a bare JSON array (no {"entries": ...} wrapper), and
+        extra prose around the JSON. Always returns a dict with an "entries" key.
+        """
+        original = raw or ""
+        raw = original.strip()
+
+        # Drop any reasoning block the server may have inlined.
+        raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL | re.IGNORECASE).strip()
+        # Strip ``` / ```json fences.
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE | re.MULTILINE).strip()
+
+        def _normalize(obj):
+            # Accept {"entries": [...]}, a bare list, or a single entry dict.
+            if isinstance(obj, dict):
+                if "entries" in obj and isinstance(obj["entries"], list):
+                    return obj
+                # A single entry object -> wrap it.
+                if any(k in obj for k in ("description", "project", "hours")):
+                    return {"entries": [obj]}
+                return {"entries": []}
+            if isinstance(obj, list):
+                return {"entries": obj}
+            return None
+
+        # 1) Try the whole (cleaned) string.
+        for candidate in (raw,):
+            try:
+                norm = _normalize(json.loads(candidate))
+                if norm is not None:
+                    return norm
+            except json.JSONDecodeError:
+                pass
+
+        # 2) Try the first {...} object block, then the first [...] array block.
+        for pattern in (r"\{.*\}", r"\[.*\]"):
+            match = re.search(pattern, raw, flags=re.DOTALL)
             if match:
                 try:
-                    return json.loads(match.group(0))
+                    norm = _normalize(json.loads(match.group(0)))
+                    if norm is not None:
+                        return norm
                 except json.JSONDecodeError:
-                    pass
-        raise LLMError("The LLM did not return valid JSON entries.")
+                    continue
+
+        # Nothing parseable -- include a snippet of what came back for debugging.
+        snippet = original.strip().replace("\n", " ")[:300] or "(empty response)"
+        raise LLMError(
+            "The AI did not return valid entries. It replied:\n\n" + snippet
+        )
 
     def _make_llm(self) -> LLMClient:
         cfg = load_llm_config(self.store)
