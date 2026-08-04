@@ -252,31 +252,30 @@ Return ONLY the JSON object."""
             {"role": "user", "content": user},
         ]
 
-        raw = llm.chat(
-            messages=messages,
-            temperature=0.0,
-            json_mode=True,
-            # Entries are short; cap output so the model can't ramble and slow
-            # the response. A day's worth of entries fits comfortably in this.
-            max_tokens=800,
-        )
-
+        # Generous token budget: if the server still does hidden "thinking",
+        # a tight cap gets consumed by reasoning and returns an empty answer.
+        raw = ""
         try:
+            raw = llm.chat(
+                messages=messages,
+                temperature=0.0,
+                json_mode=True,
+                max_tokens=2048,
+            )
             parsed = self._parse_json(raw)
         except LLMError:
-            # Retry once without JSON mode (some servers don't honour it), with a
-            # blunt instruction to emit only the JSON object.
+            # Retry once without JSON mode (some servers don't honour it or wrap
+            # output in reasoning), with a blunt instruction to emit only JSON.
             retry_messages = messages + [
-                {"role": "assistant", "content": raw},
                 {"role": "user", "content":
-                    'Return ONLY the JSON object {"entries":[...]} with no other '
-                    'text, no markdown fences, and no reasoning.'},
+                    'Reply with ONLY the JSON object {"entries":[...]} -- no other '
+                    'text, no markdown code fences, and no reasoning or <think> block.'},
             ]
             raw = llm.chat(
                 messages=retry_messages,
                 temperature=0.0,
                 json_mode=False,
-                max_tokens=800,
+                max_tokens=2048,
             )
             parsed = self._parse_json(raw)
 

@@ -166,14 +166,35 @@ class LLMClient:
             extra_body["enable_thinking"] = False
 
         result = self._post("/chat/completions", payload)
-        try:
-            content = result["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError):
-            raise LLMError("LLM response had no message content.")
 
-        content = content or ""
-        # If the server still emitted a reasoning block, strip it so downstream
-        # JSON parsing sees only the answer.
+        import logging as _logging
+        _logging.getLogger(__name__).debug("LLM raw response: %s", result)
+
+        try:
+            choice = result["choices"][0]
+            message = choice.get("message", {})
+        except (KeyError, IndexError, TypeError):
+            raise LLMError("LLM response had no choices.")
+
+        content = message.get("content") or ""
+        finish_reason = choice.get("finish_reason")
+
+        # Some Qwen/vLLM setups (thinking mode) put the answer -- or, when the
+        # token budget is exhausted mid-reasoning, ONLY the reasoning -- in a
+        # separate field. Fall back to it if content is empty.
+        if not content.strip():
+            content = message.get("reasoning_content") or ""
+
         import re
         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+
+        if not content:
+            if finish_reason == "length":
+                raise LLMError(
+                    "The model ran out of output space before answering (likely "
+                    "spent it all on reasoning). Try again, or turn off 'thinking' "
+                    "/ raise the token limit in Settings."
+                )
+            raise LLMError("The model returned an empty response.")
+
         return content
