@@ -288,8 +288,14 @@ class VoiceEntryDialog(QDialog):
             self._tx_thread.start()
 
     def _build_vocabulary(self) -> str:
-        """Domain terms (project names + keywords) to bias transcription."""
+        """Domain terms (custom + project names + keywords) to bias transcription."""
         terms: list[str] = []
+        # User-supplied custom terms first.
+        try:
+            custom = load_llm_config(self._store).custom_terms
+            terms.extend(t.strip() for t in custom.split(",") if t.strip())
+        except Exception:
+            pass
         for p in self._projects:
             terms.append(p.name)
             terms.extend(p.keywords or [])

@@ -892,6 +892,15 @@ class MainWindow(QMainWindow):
         whisper_widget.setLayout(whisper_row)
         ai_layout.addRow("Whisper model:", whisper_widget)
 
+        # Custom terms/acronyms to help voice recognition + name correction.
+        self._ai_custom_terms = QLineEdit()
+        self._ai_custom_terms.setPlaceholderText("e.g. RAG, EnGPT, Agentbot, contract management bots")
+        self._ai_custom_terms.setToolTip(
+            "Comma-separated terms/acronyms you use. Helps transcription hear "
+            "them correctly and the AI correct mis-heard names."
+        )
+        ai_layout.addRow("Custom terms:", self._ai_custom_terms)
+
         test_btn = QPushButton("Test connection")
         test_btn.clicked.connect(self._test_llm_connection)
         ai_layout.addRow("", test_btn)
@@ -985,6 +994,7 @@ class MainWindow(QMainWindow):
         self._ai_model.setText(cfg.model)
         self._ai_verify_ssl.setChecked(cfg.verify_ssl)
         self._ai_whisper.setText(cfg.whisper_model)
+        self._ai_custom_terms.setText(cfg.custom_terms)
 
     def _save_settings(self) -> None:
         """Save settings."""
@@ -1012,6 +1022,7 @@ class MainWindow(QMainWindow):
         cfg.model = self._ai_model.text().strip()
         cfg.verify_ssl = self._ai_verify_ssl.isChecked()
         cfg.whisper_model = self._ai_whisper.text().strip() or "base"
+        cfg.custom_terms = self._ai_custom_terms.text().strip()
         save_llm_config(cfg, self._store)
 
         QMessageBox.information(self, "Saved", "Settings saved!")

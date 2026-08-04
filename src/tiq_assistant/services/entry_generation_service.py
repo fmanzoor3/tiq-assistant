@@ -103,11 +103,14 @@ The DEFAULT project is "{default_name}". Use it when:
   - the work is support for another area but booked under the default project.
 
 TRANSCRIPTION CORRECTION (important -- the summary came from speech-to-text):
-  - The text may contain mis-heard product/project names. Correct them to the
-    KNOWN TERMS below (and the project list) when clearly intended.
-    e.g. "NGPT"/"and GPT" -> "EnGPT"; "rag deep"/"RAG-Deep" -> "RAGDeep";
-    fix spacing/hyphenation to match the known spelling.
-  - Only correct when confident it's the same term; don't invent names.
+  - The text may contain mis-heard acronyms/product names. Correct them to the
+    KNOWN TERMS below (and the project list) when clearly intended, and fix any
+    wrong hyphenation the transcriber added. e.g. "NGPT"/"and GPT" -> "EnGPT";
+    "RAG-Deep research" -> "RAG deep research" (RAG is an acronym; do NOT glue
+    it to the next word).
+  - Only correct/expand terms you are confident about. NEVER invent a product
+    name that isn't in the KNOWN TERMS or project list -- if unsure, keep the
+    user's wording as-is.
 
 KNOWN TERMS (correct spellings of products/areas the user works on):
 {known_terms_block}
@@ -302,10 +305,18 @@ Return ONLY the JSON object."""
         """Gather correct spellings of products/areas the user works on.
 
         Sources: project names, project keywords, and the "Area:" prefixes the
-        user has used in past descriptions (e.g. "Agentbot", "EnGPT", "RAGDeep").
+        user has used in past descriptions (e.g. "Agentbot", "EnGPT").
         These become the LLM's correction targets for mis-heard speech.
         """
         terms: list[str] = []
+
+        # User-supplied custom terms first (highest priority).
+        try:
+            custom = load_llm_config(self.store).custom_terms
+            terms.extend(t.strip() for t in custom.split(",") if t.strip())
+        except Exception:
+            pass
+
         for p in projects:
             terms.append(p.name)
             terms.extend(p.keywords or [])
@@ -389,6 +400,7 @@ def load_llm_config(store: Optional[SQLiteStore] = None) -> LLMConfig:
         verify_ssl=(get("llm_verify_ssl", "0") == "1"),
         timeout_seconds=int(get("llm_timeout", "60") or "60"),
         whisper_model=get("whisper_model", "base") or "base",
+        custom_terms=get("custom_terms", ""),
     )
 
 
@@ -402,6 +414,7 @@ def save_llm_config(config: LLMConfig, store: Optional[SQLiteStore] = None) -> N
     put("llm_verify_ssl", "1" if config.verify_ssl else "0")
     put("llm_timeout", str(config.timeout_seconds))
     put("whisper_model", config.whisper_model)
+    put("custom_terms", config.custom_terms)
 
 
 def get_entry_generation_service() -> EntryGenerationService:

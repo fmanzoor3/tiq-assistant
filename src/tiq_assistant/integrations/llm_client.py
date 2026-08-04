@@ -44,6 +44,9 @@ class LLMConfig:
     # Speech-to-text model: a size name ("base") that downloads from the Hub,
     # or a local folder path for offline use on locked-down machines.
     whisper_model: str = "base"
+    # User-supplied domain terms/acronyms (comma-separated) to help speech
+    # recognition and LLM name-correction (e.g. "RAG, EnGPT, Agentbot").
+    custom_terms: str = ""
 
 
 class LLMClient:
