@@ -57,6 +57,25 @@ class _GenWorker(QObject):
             self.failed.emit(f"Unexpected error: {e}")
 
 
+class _TranscribeWorker(QObject):
+    """Runs speech-to-text (incl. first-run model download) off the UI thread."""
+    done = pyqtSignal(str)
+    failed = pyqtSignal(str)
+
+    def __init__(self, wav_path, model_ref):
+        super().__init__()
+        self._wav = wav_path
+        self._model_ref = model_ref
+
+    def run(self):
+        try:
+            from tiq_assistant.integrations import speech
+            text = speech.transcribe(self._wav, model_ref=self._model_ref)
+            self.done.emit(text)
+        except Exception as e:  # noqa: BLE001
+            self.failed.emit(str(e))
+
+
 class VoiceEntryDialog(QDialog):
     COLORS = {
         'primary': '#0078D4', 'success': '#107C10', 'danger': '#D13438',
@@ -77,6 +96,8 @@ class VoiceEntryDialog(QDialog):
         self._recording = False
         self._thread = None
         self._worker = None
+        self._tx_thread = None
+        self._tx_worker = None
         self._saved_count = 0
 
         self._setup_ui()
@@ -226,25 +247,45 @@ class VoiceEntryDialog(QDialog):
         else:
             self._recording = False
             self._record_btn.setText("🎤 Start recording")
-            self._voice_status.setText("Transcribing…")
             self._record_btn.setEnabled(False)
-            self.repaint()
             try:
                 wav = self._recorder.stop()
-                if wav is None:
-                    self._voice_status.setText("No audio captured.")
-                    return
-                cfg = load_llm_config(self._store)
-                text = speech.transcribe(wav, model_ref=cfg.whisper_model or "base")
-                # Append (don't clobber) so multiple takes accumulate.
-                existing = self._transcript.toPlainText().strip()
-                self._transcript.setPlainText((existing + " " + text).strip() if existing else text)
-                self._voice_status.setText("Transcribed. Review/edit, then Generate.")
             except Exception as e:  # noqa: BLE001
-                self._voice_status.setText("")
-                QMessageBox.warning(self, "Transcription error", str(e))
-            finally:
                 self._record_btn.setEnabled(True)
+                QMessageBox.warning(self, "Recording error", str(e))
+                return
+            if wav is None:
+                self._voice_status.setText("No audio captured.")
+                self._record_btn.setEnabled(True)
+                return
+
+            # Transcribe on a worker thread so the UI stays responsive -- the
+            # first run downloads the model, which can take a while.
+            self._voice_status.setText(
+                "Transcribing… (first run downloads the speech model — please wait)"
+            )
+            cfg = load_llm_config(self._store)
+            self._tx_thread = QThread()
+            self._tx_worker = _TranscribeWorker(wav, cfg.whisper_model or "base")
+            self._tx_worker.moveToThread(self._tx_thread)
+            self._tx_thread.started.connect(self._tx_worker.run)
+            self._tx_worker.done.connect(self._on_transcribed)
+            self._tx_worker.failed.connect(self._on_transcribe_failed)
+            self._tx_worker.done.connect(self._tx_thread.quit)
+            self._tx_worker.failed.connect(self._tx_thread.quit)
+            self._tx_thread.start()
+
+    def _on_transcribed(self, text: str) -> None:
+        # Append (don't clobber) so multiple takes accumulate.
+        existing = self._transcript.toPlainText().strip()
+        self._transcript.setPlainText((existing + " " + text).strip() if existing else text)
+        self._voice_status.setText("Transcribed. Review/edit, then Generate.")
+        self._record_btn.setEnabled(True)
+
+    def _on_transcribe_failed(self, message: str) -> None:
+        self._voice_status.setText("")
+        self._record_btn.setEnabled(True)
+        QMessageBox.warning(self, "Transcription error", message)
 
     # --------------------------------------------------------- generate
 
