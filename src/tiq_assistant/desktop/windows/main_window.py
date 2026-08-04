@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
 
         # Create tabs - Timesheet first
         self._tabs.addTab(self._create_timesheet_tab(), "Timesheet")
+        self._tabs.addTab(self._create_search_tab(), "Search")
         self._tabs.addTab(self._create_projects_tab(), "Projects")
         self._tabs.addTab(self._create_settings_tab(), "Settings")
 
@@ -216,6 +217,93 @@ class MainWindow(QMainWindow):
                 background-color: white;
             }}
         """)
+
+    # ==================== SEARCH TAB ====================
+
+    def _create_search_tab(self) -> QWidget:
+        """Create the tab for searching across all past entries."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # Search box + button
+        search_row = QHBoxLayout()
+        search_row.addWidget(QLabel("Search entries:"))
+        self._search_input = QLineEdit()
+        self._search_input.setPlaceholderText("e.g. claude design, Agentbot, meeting…")
+        self._search_input.returnPressed.connect(self._run_search)
+        search_row.addWidget(self._search_input, 1)
+        search_btn = self._create_primary_button("Search")
+        search_btn.clicked.connect(self._run_search)
+        search_row.addWidget(search_btn)
+        layout.addLayout(search_row)
+
+        hint = QLabel("Type words to find matching entries; click a result to open that day.")
+        hint.setStyleSheet(f"color: {self.COLORS['text_secondary']}; font-style: italic;")
+        layout.addWidget(hint)
+
+        # Results table
+        self._search_table = QTableWidget()
+        self._search_table.setColumnCount(5)
+        self._search_table.setHorizontalHeaderLabels(
+            ["Date", "Hours", "Project", "Ticket", "Description"]
+        )
+        sh = self._search_table.horizontalHeader()
+        sh.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self._search_table.setColumnWidth(0, 100)
+        self._search_table.setColumnWidth(1, 60)
+        self._search_table.setColumnWidth(2, 200)
+        self._search_table.setColumnWidth(3, 90)
+        self._search_table.verticalHeader().setVisible(False)
+        self._search_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._search_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._search_table.cellDoubleClicked.connect(self._open_search_result)
+        self._style_table(self._search_table)
+        layout.addWidget(self._search_table, 1)
+
+        self._search_status = QLabel("")
+        self._search_status.setStyleSheet(f"color: {self.COLORS['text_secondary']};")
+        layout.addWidget(self._search_status)
+
+        return widget
+
+    def _run_search(self) -> None:
+        """Run the search and populate the results table, ranked by relevance."""
+        query = self._search_input.text().strip()
+        results = self._store.search_entries(query, limit=200)
+
+        self._search_table.setRowCount(len(results))
+        for i, e in enumerate(results):
+            date_item = QTableWidgetItem(e.entry_date.strftime("%d.%m.%Y"))
+            # Stash the date so a click can open that day.
+            date_item.setData(Qt.ItemDataRole.UserRole, e.entry_date)
+            self._search_table.setItem(i, 0, date_item)
+            self._search_table.setItem(i, 1, QTableWidgetItem(f"{e.hours}h"))
+            self._search_table.setItem(i, 2, QTableWidgetItem(e.project_name or "-"))
+            self._search_table.setItem(i, 3, QTableWidgetItem(e.ticket_number or "-"))
+            self._search_table.setItem(i, 4, QTableWidgetItem(e.description))
+
+        if query:
+            self._search_status.setText(
+                f"{len(results)} matching entr{'y' if len(results) == 1 else 'ies'}. "
+                f"Double-click a row to open that day."
+            )
+        else:
+            self._search_status.setText(
+                f"Showing {len(results)} most recent entries. "
+                f"Type to search; double-click a row to open that day."
+            )
+
+    def _open_search_result(self, row: int, _col: int) -> None:
+        """Open the day entry dialog for the clicked search result."""
+        date_item = self._search_table.item(row, 0)
+        if not date_item:
+            return
+        entry_date = date_item.data(Qt.ItemDataRole.UserRole)
+        if not entry_date:
+            return
+        self._open_day_entry_dialog(entry_date, SessionType.FULL_DAY)
+        # Refresh results after edits in the day dialog.
+        self._run_search()
 
     # ==================== PROJECTS TAB ====================
 
@@ -1201,3 +1289,4 @@ class MainWindow(QMainWindow):
         self._refresh_projects()
         self._load_settings()
         self._refresh_holidays_summary()
+        self._run_search()  # populate Search tab with recent entries

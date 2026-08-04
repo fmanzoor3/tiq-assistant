@@ -377,6 +377,48 @@ class SQLiteStore:
             exported_at=datetime.fromisoformat(row["exported_at"]) if row["exported_at"] else None,
         )
 
+    def search_entries(self, query: str, limit: int = 100) -> list[TimesheetEntry]:
+        """Search entries by description / project / ticket, ranked by relevance.
+
+        Splits the query into terms and matches entries that contain ALL terms
+        (case-insensitive) across description, project name, or ticket number.
+        Ranking favours: exact phrase match in description > all terms in
+        description > matches elsewhere; ties broken by most recent date.
+        An empty query returns the most recent entries.
+        """
+        query = (query or "").strip()
+        if not query:
+            return self.get_entries()[-limit:][::-1]
+
+        terms = [t.lower() for t in query.split() if t.strip()]
+        phrase = query.lower()
+
+        scored: list[tuple[float, TimesheetEntry]] = []
+        for entry in self.get_entries():
+            desc = (entry.description or "").lower()
+            proj = (entry.project_name or "").lower()
+            ticket = (entry.ticket_number or "").lower()
+            haystack = f"{desc} {proj} {ticket}"
+
+            # Require every term to appear somewhere in the entry.
+            if not all(t in haystack for t in terms):
+                continue
+
+            score = 0.0
+            if phrase in desc:
+                score += 100                       # exact phrase in description
+            elif phrase in haystack:
+                score += 60                        # exact phrase elsewhere
+            score += sum(10 for t in terms if t in desc)   # terms in description
+            score += sum(4 for t in terms if t in proj or t in ticket)
+            # Recency nudge (newer entries rank slightly higher on ties).
+            score += entry.entry_date.toordinal() / 1_000_000.0
+
+            scored.append((score, entry))
+
+        scored.sort(key=lambda s: s[0], reverse=True)
+        return [e for _s, e in scored[:limit]]
+
     def get_description_history(
         self,
         project_name: Optional[str] = None,
