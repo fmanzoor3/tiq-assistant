@@ -616,14 +616,25 @@ class DayEntryDialog(QDialog):
 
         projects = self._store.get_projects()
 
+        # Which meetings are already imported for this day (across all prior
+        # openings of the dialog), so we don't offer to add them again.
+        already_added_ids = {
+            e.source_event_id
+            for e in self._store.get_entries(
+                start_date=self._target_date, end_date=self._target_date
+            )
+            if e.source_event_id
+        }
+
         self._meetings_table.setRowCount(len(self._meetings))
 
         for i, meeting in enumerate(self._meetings):
             is_matched = meeting.match_confidence is not None and meeting.match_confidence > 0
+            already_added = meeting.id in already_added_ids
 
-            # Checkbox
+            # Checkbox (unchecked + disabled if already added)
             checkbox = QCheckBox()
-            checkbox.setChecked(is_matched)
+            checkbox.setChecked(is_matched and not already_added)
             self._meetings_table.setCellWidget(i, 0, checkbox)
 
             # Time
@@ -663,8 +674,8 @@ class DayEntryDialog(QDialog):
             project_combo.setCurrentIndex(selected_idx)
             self._meetings_table.setCellWidget(i, 5, project_combo)
 
-            # Add single button
-            add_btn = QPushButton("Add")
+            # Add single button ("Added" + disabled if already imported)
+            add_btn = QPushButton("Added" if already_added else "Add")
             add_btn.setStyleSheet(f"""
                 background-color: {self.COLORS['primary']};
                 color: white;
@@ -680,6 +691,10 @@ class DayEntryDialog(QDialog):
                     item = self._meetings_table.item(i, col)
                     if item:
                         item.setBackground(QBrush(QColor(self.COLORS['success_light'])))
+
+            # Grey out rows whose meeting is already imported.
+            if already_added:
+                self._disable_meeting_row(i)
 
     def _get_remaining_hours(self) -> int:
         """Calculate remaining hours for the day."""
@@ -848,6 +863,13 @@ class DayEntryDialog(QDialog):
         project_combo = self._meetings_table.cellWidget(row, 5)
         project_id = project_combo.currentData() if project_combo else None
 
+        # Guard against duplicates: if this meeting was already imported for the
+        # day (in this or a previous opening of the dialog), don't add it again.
+        # Meetings are identified by their source_event_id.
+        if self._meeting_already_added(meeting.id):
+            self._disable_meeting_row(row)
+            return
+
         settings = self._store.get_settings()
         project = self._store.get_project(project_id) if project_id else None
 
@@ -874,6 +896,19 @@ class DayEntryDialog(QDialog):
         self._refresh_entries()
 
         # Disable the row after adding
+        self._disable_meeting_row(row)
+
+    def _meeting_already_added(self, meeting_id: str) -> bool:
+        """True if an entry sourced from this meeting already exists today."""
+        for e in self._store.get_entries(
+            start_date=self._target_date, end_date=self._target_date
+        ):
+            if e.source_event_id and e.source_event_id == meeting_id:
+                return True
+        return False
+
+    def _disable_meeting_row(self, row: int) -> None:
+        """Grey out a meetings-table row so it can't be added again."""
         for col in range(self._meetings_table.columnCount()):
             widget = self._meetings_table.cellWidget(row, col)
             if widget:
